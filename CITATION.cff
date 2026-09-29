@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use SN Ia Features Fitter in your research, please cite the preferred reference below."
+type: software
+title: SN Ia Features Fitter
+abstract: "Si II 6355/5972 and Ca II NIR fitting for supernova spectra."
+authors:
+  - family-names: Burgaz
+    given-names: Umut
+version: 0.2.0
+license: MIT
+keywords:
+  - supernovae
+  - spectroscopy
+  - silicon
+  - calcium
+  - astronomy

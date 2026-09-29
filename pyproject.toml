@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sn-ia-features-fitter"
+version = "0.2.0"
+description = "Si II 6355/5972 and Ca II NIR fitting for supernova spectra"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Umut Burgaz"}]
+requires-python = ">=3.10"
+dependencies = [
+    "lmfit>=1.2",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "PyAstronomy>=0.21",
+    "scipy>=1.15",
+]
+
+[project.urls]
+Publication = "https://doi.org/10.1051/0004-6361/202450386"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+sn-ia-fit = "sn_ia_features_fitter.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sn_ia_features_fitter*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

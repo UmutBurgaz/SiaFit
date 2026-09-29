@@ -1,0 +1,8 @@
+include README.md
+include LICENSE
+include CITATION.cff
+include example_catalog.csv
+recursive-include examples *.py
+recursive-include spectra *.DAT *.md
+recursive-include tests *.py
+global-exclude .DS_Store *.py[cod]
