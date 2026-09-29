@@ -16,8 +16,8 @@ For development, use `python -m pip install -e '.[dev]'`.
 
 [example_catalog.csv](example_catalog.csv) contains three spectra with sampling for both fitting regions:
 
-| Spectrum | Instrument | Purpose |
-| --- | --- | --- |
+| Spectrum | Instrument | 
+| --- | --- | 
 | `ZTF18aagrtxs_0_20180328_SEDM.DAT` | SEDM |
 | `ZTF18abtnbys_0_20180913_DBSP.DAT` | DBSP |
 | `ZTF20aatzwgk_1_20200414_SEDM.DAT` | SEDM |
