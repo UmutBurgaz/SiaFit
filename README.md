@@ -27,9 +27,9 @@ The catalogue supplies each spectrum's redshift, Milky Way reddening, phase, opt
 ## Run a fit
 
 ```bash
-sn-ia-fit run example_catalog.csv --features all --output-dir results --niter 20 --seed 42
-sn-ia-fit run example_catalog.csv --features si --output-dir si_results
-sn-ia-fit run example_catalog.csv --features ca --output-dir ca_results
+siafit run example_catalog.csv --features all --output-dir results --niter 20 --seed 42
+siafit run example_catalog.csv --features si --output-dir si_results
+siafit run example_catalog.csv --features ca --output-dir ca_results
 ```
 
 The default feature selection is `si` to preserve existing Si-only fitting. Use `--features all` for the Si II and Ca II NIR fitting.
