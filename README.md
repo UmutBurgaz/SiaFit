@@ -1,10 +1,18 @@
-# SN Ia Features Fitter
+# SiaFit
 
-SN Ia Features Fitter measures Si II λ6355/λ5972 and the Ca II near-infrared triplet in supernova spectra. It supports automatic batch runs, interactive review, manual continuum selection, and separate background and fitting stages. The `all` workflow fits Si first and passes its selected λ6355 velocity directly to Ca.
+SiaFit measures Si II λ6355/λ5972 and the Ca II near-infrared triplet in supernova spectra. It supports automatic batch runs, interactive review, manual continuum selection, and separate background and fitting stages. The `all` workflow fits Si first and passes its selected λ6355 velocity directly to Ca.
 
 ## Install
 
-Python 3.10 or newer is required. From a checkout of this repository:
+Python 3.10 or newer is required. The distribution name is `siafit` and the command is `siafit`.
+
+Once published to PyPI, installation will be:
+
+```bash
+python -m pip install siafit
+```
+
+Until then, install from a checkout of this repository:
 
 ```bash
 python -m pip install -e .
@@ -12,12 +20,14 @@ python -m pip install -e .
 
 For development, use `python -m pip install -e '.[dev]'`.
 
+Python imports use `siafit`, for example `from siafit import FitConfig, run_catalog`.
+
 ## Bundled examples
 
 [example_catalog.csv](example_catalog.csv) contains three spectra with sampling for both fitting regions:
 
-| Spectrum | Instrument | 
-| --- | --- | 
+| Spectrum | Instrument |
+| --- | --- |
 | `ZTF18aagrtxs_0_20180328_SEDM.DAT` | SEDM |
 | `ZTF18abtnbys_0_20180913_DBSP.DAT` | DBSP |
 | `ZTF20aatzwgk_1_20200414_SEDM.DAT` | SEDM |
@@ -64,7 +74,7 @@ Velocities are in 10³ km/s; equivalent widths are in Å, FWHM are available bot
 ## Python API
 
 ```python
-from sn_ia_features_fitter import FitConfig, run_catalog
+from siafit import FitConfig, run_catalog
 
 summary = run_catalog(
     "example_catalog.csv",
@@ -74,7 +84,7 @@ summary = run_catalog(
 print(summary)
 ```
 
-The [automatic](examples/automatic_example.py) and [manual](examples/manual_example.py) examples are directly runnable. Shared reader, preprocessing, smoothing, and Monte Carlo helpers live in `sn_ia_features_fitter/common.py`; Si and Ca feature code lives in `core.py` and `ca.py` respectively.
+The [automatic](examples/automatic_example.py) and [manual](examples/manual_example.py) examples are directly runnable. Shared reader, preprocessing, smoothing, and Monte Carlo helpers live in `siafit/common.py`; Si and Ca feature code lives in `core.py` and `ca.py` respectively.
 
 ## Citation and license
 

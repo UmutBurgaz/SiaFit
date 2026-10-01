@@ -5,8 +5,8 @@ import pandas as pd
 import pytest
 from matplotlib.figure import Figure
 
-from sn_ia_features_fitter import common, core
-from sn_ia_features_fitter.style import PLOT_STYLE
+from siafit import common, core
+from siafit.style import PLOT_STYLE
 
 ROOT = Path(__file__).resolve().parents[1]
 

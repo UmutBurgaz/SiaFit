@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from sn_ia_features_fitter import FitConfig, run_catalog
+from siafit import FitConfig, run_catalog
 
 ROOT = Path(__file__).resolve().parents[1]
 

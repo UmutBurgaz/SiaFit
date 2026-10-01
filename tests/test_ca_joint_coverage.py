@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from sn_ia_features_fitter import FitConfig, ca, common, core, fit_background_catalog, run_catalog
-from sn_ia_features_fitter.coverage import validate_coverage
+from siafit import FitConfig, ca, common, core, fit_background_catalog, run_catalog
+from siafit.coverage import validate_coverage
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from sn_ia_features_fitter import FitConfig
-from sn_ia_features_fitter.cli import build_parser
+from siafit import FitConfig
+from siafit.cli import build_parser
 
 
 @pytest.mark.parametrize(
@@ -49,4 +49,4 @@ def test_ca_resolution_neighbors_default_matches_production_runners():
 @pytest.mark.parametrize("command", ["run", "background", "fit"])
 def test_cli_default_output_directory(command):
     args = build_parser().parse_args([command, "catalog.csv"])
-    assert args.output_dir == Path("sn_ia_fit_results")
+    assert args.output_dir == Path("siafit_results")

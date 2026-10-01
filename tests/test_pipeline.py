@@ -3,8 +3,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from sn_ia_features_fitter import FitConfig, fit_background_catalog, pipeline, run_catalog
-from sn_ia_features_fitter.catalog import load_catalog
+from siafit import FitConfig, fit_background_catalog, pipeline, run_catalog
+from siafit.catalog import load_catalog
 
 ROOT = Path(__file__).resolve().parents[1]
 

@@ -49,4 +49,4 @@ jobs:
       - name: Build source distribution and wheel
         run: python -m build
       - name: Check installed command
-        run: sn-ia-fit --help
+        run: siafit --help

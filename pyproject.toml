@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "SiaFit"
+name = "siafit"
 version = "0.2.0"
 description = "Si II 6355/5972 and Ca II NIR fitting for supernova spectra"
 readme = "README.md"
@@ -21,6 +21,9 @@ dependencies = [
 ]
 
 [project.urls]
+Homepage = "https://github.com/UmutBurgaz/SiaFit"
+Repository = "https://github.com/UmutBurgaz/SiaFit"
+Issues = "https://github.com/UmutBurgaz/SiaFit/issues"
 Publication = "https://doi.org/10.1051/0004-6361/202450386"
 
 [project.optional-dependencies]
@@ -30,10 +33,10 @@ dev = [
 ]
 
 [project.scripts]
-sn-ia-fit = "sn_ia_features_fitter.cli:main"
+siafit = "siafit.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["sn_ia_features_fitter*"]
+include = ["siafit*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

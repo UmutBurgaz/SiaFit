@@ -15,7 +15,7 @@ def _add_catalog_arguments(parser: argparse.ArgumentParser) -> None:
         help="Fit Si II, Ca II NIR, or Si II followed by Ca II NIR",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("sn_ia_fit_results"), help="Output directory"
+        "--output-dir", type=Path, default=Path("siafit_results"), help="Output directory"
     )
     parser.add_argument(
         "--spectra-dir",
@@ -83,7 +83,7 @@ def _add_fit_arguments(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="sn-ia-fit",
+        prog="siafit",
         description="Fit Si II 6355/5972 and Ca II NIR features in supernova spectra",
     )
     parser.add_argument("--version", action="version", version="%(prog)s 0.2.0")
@@ -136,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     config = _config_from_args(args)
 
     # Defer the heavier scientific imports until after argument parsing, so
-    # `sn-ia-fit --help` remains fast and useful even during environment setup.
+    # `siafit --help` remains fast and useful even during environment setup.
     from .pipeline import fit_background_catalog, run_catalog
 
     common = dict(

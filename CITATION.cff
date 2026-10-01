@@ -1,7 +1,7 @@
 cff-version: 1.2.0
-message: "If you use SN Ia Features Fitter in your research, please cite the preferred reference below."
+message: "If you use SiaFit in your research, please cite the preferred reference below."
 type: software
-title: SN Ia Features Fitter
+title: SiaFit
 abstract: "Si II 6355/5972 and Ca II NIR fitting for supernova spectra."
 authors:
   - family-names: Burgaz

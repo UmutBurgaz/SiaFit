@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from sn_ia_features_fitter.catalog import load_catalog, portable_spectrum_path
+from siafit.catalog import load_catalog, portable_spectrum_path
 
 ROOT = Path(__file__).resolve().parents[1]
 
