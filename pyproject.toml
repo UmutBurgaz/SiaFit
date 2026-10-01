@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sn-ia-features-fitter"
+name = "SiaFit"
 version = "0.2.0"
 description = "Si II 6355/5972 and Ca II NIR fitting for supernova spectra"
 readme = "README.md"
