@@ -97,3 +97,5 @@ python -m pytest -q
 python -m ruff check .
 python -m build
 ```
+## Acknowledgements
+siafit was developed by Umut Burgaz with the help of Codex (OpenAI), an AI coding assistant that contributed to the implementation, tests and documentation.
