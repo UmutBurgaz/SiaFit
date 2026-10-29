@@ -152,7 +152,10 @@ def test_joint_fit_recovers_known_synthetic_line_parameters():
         "sil5972_blue_side": -24.0,
         "sil5972_red_side": -1.0,
     }
-    metrics, figure, *_ = core.fit_features(spectrum, background, vel_width=2.0)
+    # Preserve the original numerical reference independently of API defaults.
+    legacy_settings = dict(n_resol_neighbors=4, k_vel12_bounds=(0.75, 1.25),
+                           k_fwhm12_bounds=(0.25, 1.75))
+    metrics, figure, *_ = core.fit_features(spectrum, background, vel_width=2.0, **legacy_settings)
     try:
         assert metrics["optimizer_success"]
         assert metrics["sil6355_vel"] == pytest.approx(-11.0, abs=0.01)
@@ -176,7 +179,7 @@ def test_joint_fit_recovers_known_synthetic_line_parameters():
         core.plt.close(figure)
 
     mc_summary, mc_figure = core.fit_features_mc(
-        spectrum, background, n_iter=3, seed=42, vel_width=2.0
+        spectrum, background, n_iter=3, seed=42, vel_width=2.0, **legacy_settings
     )
     try:
         assert mc_summary["n_success_resample"] == 3

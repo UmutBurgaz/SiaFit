@@ -25,7 +25,7 @@ def test_ca_triplet_recovers_synthetic_pvf_and_hvf():
         "vel_ca_ref": ca.wl_to_vel(wavelength, ca.rest_wl_ca_ref),
     })
     background = {"ca_red_side": 3.0, "ca_blue_side": -35.0}
-    metrics, figure, *_ = ca.fit_features(spectrum, background, -10.0)
+    metrics, figure, *_ = ca.fit_features(spectrum, background, -10.0, n_resol_neighbors=4)
     try:
         # Values from the original Ca implementation on this exact input.
         assert metrics["ca_pvf_vel"] == pytest.approx(-10.0427458888, abs=1e-4)

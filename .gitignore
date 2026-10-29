@@ -6,6 +6,7 @@ __pycache__/
 pytest-cache-files-*/
 .ruff_cache/
 .venv/
+.venv-release/
 build/
 dist/
 results/

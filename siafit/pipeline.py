@@ -17,6 +17,7 @@ from . import core
 from .catalog import SpectrumRecord, load_catalog, portable_spectrum_path
 from .config import FitConfig
 from .coverage import describe_requirements, validate_coverage
+from .quality import review_flags
 
 BACKGROUND_KEYS = (
     "sil6355_red_side",
@@ -302,6 +303,11 @@ def _fit_spectrum(
             continuum_shift=config.continuum_shift,
             seed=seed,
         )
+    metrics = dict(metrics)
+    metrics.update(review_flags(
+        metrics, mc_summary, df_spec.attrs.get("uncertainty_source"),
+        config.redchi_warning_threshold,
+    ))
     return metrics, fit_figure, mc_summary, mc_figure
 
 

@@ -61,8 +61,11 @@ def collect_mc_draws(metric_names, modes, n_iter, draw):
         for _ in range(n_iter):
             try:
                 result = draw(mode)
-                for name in metric_names:
-                    per_metric[name].append(result[name])
+                # Validate the complete result before committing any metric. A
+                # malformed draw must not leave partially appended measurements.
+                values = {name: float(result[name]) for name in metric_names}
+                for name, value in values.items():
+                    per_metric[name].append(value)
             except Exception as exc:
                 failures += 1
                 reasons[f"{type(exc).__name__}: {exc}"[:240]] += 1

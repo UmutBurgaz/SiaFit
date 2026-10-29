@@ -12,6 +12,7 @@ from . import ca, core
 from . import pipeline as si
 from .catalog import load_catalog, portable_spectrum_path
 from .config import FitConfig
+from .quality import review_flags
 
 CA_KEYS = ("ca_red_side", "ca_blue_side")
 CA_STATUS_KEYS = ("status_ca_red_side", "status_ca_blue_side")
@@ -96,6 +97,12 @@ def _fit_ca(df_spec, selection, si_velocity, config, seed):
             continuum_shift=config.continuum_shift,
             seed=seed,
         )
+    metrics = dict(metrics)
+    metrics.update(review_flags(
+        metrics, mc_summary, df_spec.attrs.get("uncertainty_source"),
+        config.redchi_warning_threshold, prefix="ca_",
+    ))
+    metrics["ca_uncertainty_conditioning"] = "fixed_si_velocity"
     return metrics, fit_figure, mc_summary, mc_figure
 
 
@@ -219,6 +226,12 @@ def _run(catalog_path, output_dir, *, config, spectra_dir, stage, start, end, re
     log_rows = si._existing_rows(log_path, resume)
     completed_rows = background_rows if stage == "background" else result_rows
     completed = {str(row.get("record_id")) for row in completed_rows}
+    if stage == "background":
+        latest_attempts = {
+            str(row.get("record_id")): si._as_bool(row.get("success"), False)
+            for row in log_rows
+        }
+        completed = {record_id for record_id in completed if latest_attempts.get(record_id, False)}
     succeeded = failed = skipped = 0
     for position, record in enumerate(records, 1):
         if record.record_id in completed:

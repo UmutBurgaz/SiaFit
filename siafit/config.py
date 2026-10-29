@@ -34,7 +34,7 @@ class FitConfig:
     ca_red_bounds_kms: tuple[float, float] = (-5_000.0, 25_000.0)
     ca_blue_bounds_kms: tuple[float, float] = (-55_000.0, -20_000.0)
     ca_n_resol_neighbors: int = 3
-    ca_hvf_min_sep_kms: float = 2.0
+    ca_hvf_min_sep_kms: float = 2.0  # Legacy name: value is in 10³ km/s, not km/s.
     ca_pvf_vel_frac: float = 0.25
     si_velocity: float | None = None
     n_resol_neighbors: int = 3
@@ -44,6 +44,7 @@ class FitConfig:
     mc_mode: str = "resample"
     continuum_shift: float = 1.3
     seed: int | None = None
+    redchi_warning_threshold: float | None = 10.0
 
     def validate(self) -> None:
         def finite_number(name: str, value: object) -> None:
@@ -109,6 +110,9 @@ class FitConfig:
         ):
             ordered_bounds(name, getattr(self, name))
         for name, bounds_name in (
+            ("sil6355_red_initial", "sil6355_red_bounds_kms"),
+            ("sil6355_blue_initial", "sil6355_blue_bounds_kms"),
+            ("sil5972_blue_initial", "sil5972_blue_bounds_kms"),
             ("ca_red_initial", "ca_red_bounds_kms"),
             ("ca_blue_initial", "ca_blue_bounds_kms"),
         ):
@@ -134,3 +138,7 @@ class FitConfig:
             raise ValueError("continuum_shift cannot be negative")
         if self.si_velocity is not None:
             finite_number("si_velocity", self.si_velocity)
+        if self.redchi_warning_threshold is not None:
+            finite_number("redchi_warning_threshold", self.redchi_warning_threshold)
+            if self.redchi_warning_threshold <= 0:
+                raise ValueError("redchi_warning_threshold must be positive or None")

@@ -69,7 +69,60 @@ The coverage settings can be inspected or changed through `FitConfig`, including
 
 A run writes `backgrounds.csv`, `fit_results.csv`, `fit_log.csv`, and diagnostic PNGs under `plots/`. A background-only run writes `background_log.csv`. Si measurements use `best_fit_sil...` columns; Ca measurements use `best_fit_ca...` columns. Joint Monte Carlo summaries are separated with `si_` and `ca_` prefixes. The output also records the selected Si velocity passed into Ca, continuum anchor values and statuses, uncertainty provenance, and coverage status.
 
+A successful run means the workflow completed; it does not guarantee that every
+measurement passes scientific quality checks. Inspect `background_qc_flag`,
+`mc_qc_flag`, the joint-workflow `si_`/`ca_` quality flags, successful draw counts,
+and failure reasons before using the results. Flagged continuum anchors may need
+review or manual selection. In the bundled examples, the first spectrum's automatic
+Si anchors can leave too few λ5972 fit points for Monte Carlo draws; use review/manual
+mode to inspect and adjust its continuum rather than treating missing uncertainties
+as valid measurements.
+
 Velocities are in 10³ km/s; equivalent widths are in Å, FWHM are available both in 10³ km/s and Å. Ca is modeled as photospheric and high-velocity triplets. The three lines within each triplet share an amplitude, velocity, and width; the two triplets have separate parameters. The photospheric velocity is constrained to within 25% of Si II λ6355. The high-velocity component is at least 2,000 km/s faster than Si II λ6355, which does not guarantee that separation from the fitted Ca photospheric component.
+
+### Fit diagnostics and review flags
+
+Non-converged Ca optimizations now fail the spectrum or the individual MC draw,
+as Si optimizations already do. Ca MC summaries include `failure_reasons_*`;
+joint catalogues prefix those columns with `ca_`. Best fits and MC draws use the
+same Ca numerical implementation and validate continuum windows, uncertainties,
+and positive finite continua.
+
+Best-fit diagnostics include `best_fit_at_bound_<parameter>` for Si and
+`best_fit_ca_at_bound_<parameter>` for Ca, plus `any_at_bound` and
+`covariance_available` under the same prefixes. A parameter is near a finite
+bound when its distance is at most `1e-6 * max(1, abs(bound))` in that parameter's
+units. Tied parameters are excluded. A finite covariance does not override a
+boundary warning.
+
+MC columns `at_bound_<parameter>_fraction_<mode>` and
+`any_at_bound_fraction_<mode>` report fractions of successful draws; joint runs
+add the `si_` or `ca_` prefix. With no successful draws these fractions are NaN,
+not zero. Draws that converge at a bound remain in the uncertainty summaries.
+
+`best_fit_fit_qc_flag` (Si) and `best_fit_ca_fit_qc_flag` (Ca) mark results needing
+review. Their corresponding `fit_qc_reasons` columns explain boundary solutions,
+missing covariance, high reduced chi-square, estimated/mixed uncertainties,
+boundary-limited MC draws, or a success fraction below 80% in any requested MC
+mode. Continue to inspect the separate background-quality flags as well.
+These are review indicators, not automatic scientific rejection criteria.
+
+The default reduced chi-square warning threshold is 10. Change it with
+`--redchi-warning-threshold VALUE` or `FitConfig(redchi_warning_threshold=VALUE)`;
+set the Python field to `None` to disable that warning. This is a configurable
+heuristic, not a calibrated significance test, especially when uncertainties
+were estimated or pixels are correlated. Flagged measurements remain in the CSV.
+
+Ca MC uncertainties are conditional on the fixed selected Si velocity; they do
+not propagate Si velocity uncertainty. The output records this as
+`best_fit_ca_uncertainty_conditioning=fixed_si_velocity`. Resample mode retains
+the existing shared full-spectrum noise realizations in joint runs.
+
+The legacy field `ca_hvf_min_sep_kms` retains its original units of **10³ km/s**:
+`2.0` means 2,000 km/s. Existing configuration fields and CSV units are preserved.
+Direct low-level fitter defaults now match `FitConfig` (including 3 resolution
+neighbors and 100 MC draws). Pipeline defaults and physical constraints are
+unchanged; direct callers needing historical settings can pass them explicitly.
 
 ## Python API
 
@@ -97,5 +150,18 @@ python -m pytest -q
 python -m ruff check .
 python -m build
 ```
-## Acknowledgements
-siafit was developed by Umut Burgaz with the help of Codex (OpenAI), an AI coding assistant that contributed to the implementation, tests and documentation.
+
+## Versioning and compatibility
+
+SiaFit 1.0 defines the supported public interface as the `siafit` command and its
+`run`, `background`, and `fit` subcommands; the documented options; and the Python
+exports `FitConfig`, `SpectrumRecord`, `load_catalog`, `run_catalog`, and
+`fit_background_catalog`.
+
+Within 1.x, existing command syntax, documented configuration fields, required
+catalogue columns, and existing CSV measurement column names and units will remain
+compatible. New optional arguments and output columns may be added; consumers
+should select columns by name and tolerate extra columns. Internal modules and
+undocumented helpers are not covered by this promise. Numerical results can change
+when fitting bugs are corrected, and such changes will be described in release
+notes. Breaking changes to the supported interface require a new major version.

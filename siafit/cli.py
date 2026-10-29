@@ -79,6 +79,10 @@ def _add_fit_arguments(parser: argparse.ArgumentParser) -> None:
         help="Anchor-shift sigma in 10^3 km/s for shift-based MC modes",
     )
     parser.add_argument("--seed", type=int, default=None, help="Reproducible base seed")
+    parser.add_argument(
+        "--redchi-warning-threshold", type=float, default=10.0,
+        help="Reduced chi-square review threshold (default 10); flags results without rejecting them",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="siafit",
         description="Fit Si II 6355/5972 and Ca II NIR features in supernova spectra",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.2.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 1.0.0")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run = subparsers.add_parser("run", help="Select backgrounds and fit spectra end to end")
@@ -128,6 +132,7 @@ def _config_from_args(args: argparse.Namespace) -> FitConfig:
         mc_mode=getattr(args, "mc_mode", "resample"),
         continuum_shift=getattr(args, "continuum_shift", 1.3),
         seed=getattr(args, "seed", None),
+        redchi_warning_threshold=getattr(args, "redchi_warning_threshold", 10.0),
     )
 
 

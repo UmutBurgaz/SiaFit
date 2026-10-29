@@ -18,7 +18,11 @@ from .common import (
     vel_to_wl,
     wl_to_vel,
 )
+from .config import FitConfig
 from .coverage import RequiredInterval
+from .quality import mc_boundary_summary, optimizer_diagnostics
+
+_DEFAULTS = FitConfig()
 
 speed_of_light = 2.99792e5  # km/s
 rest_wl_ca1 = 8498.02
@@ -112,8 +116,8 @@ def find_background_regions(
     dv_kms_blue=-1000.0,
     min_sep=5,
     max_attempts=5,
-    ca_red_bounds_kms=(-5000.0, 20000.0),
-    ca_blue_bounds_kms=(-50000.0, -20000.0),
+    ca_red_bounds_kms=_DEFAULTS.ca_red_bounds_kms,
+    ca_blue_bounds_kms=_DEFAULTS.ca_blue_bounds_kms,
 ):
     """
     Locate Ca II NIR continuum anchor points using spline derivatives.
@@ -227,9 +231,9 @@ def fit_features(
     background_dict,
     si_vel_1e3,
     vel_width: float = 4.0,
-    n_resol_neighbors: int = 4,
-    hvf_min_sep_kms: float = 2.0,
-    pvf_vel_frac: float = 0.25,
+    n_resol_neighbors: int = _DEFAULTS.ca_n_resol_neighbors,
+    hvf_min_sep_kms: float = _DEFAULTS.ca_hvf_min_sep_kms,
+    pvf_vel_frac: float = _DEFAULTS.ca_pvf_vel_frac,
 ):
     """
     Fit the Ca II NIR triplet with 3 PVF + 3 HVF Gaussians.
@@ -250,7 +254,7 @@ def fit_features(
     si_vel_1e3 : float
         Si II 6355 velocity in 10^3 km/s (used to set PVF/HVF priors).
     vel_width : float
-        Half-width of background windows (10^3 km/s).
+        Full width of each background window (10^3 km/s).
     n_resol_neighbors : int
         Points around 8542 Å used to estimate instrumental resolution.
     hvf_min_sep_kms : float
@@ -265,23 +269,55 @@ def fit_features(
     back_ca : lmfit ModelResult (background)
     fit_ca : lmfit MinimizerResult (Gaussian fit)
     """
+    metrics, out_back, out_fit, plot_data = _fit_arrays(
+        df_spec['rest_wl'].to_numpy(), df_spec['norm_fl'].to_numpy(),
+        df_spec['norm_flerr'].to_numpy(), df_spec['vel_ca_ref'].to_numpy(),
+        background_dict, si_vel_1e3, vel_width, n_resol_neighbors,
+        hvf_min_sep_kms, pvf_vel_frac,
+    )
+    fig = _make_fit_figure(
+        df_spec, background_dict, out_back=out_back, out_fit=out_fit,
+        vel_width=vel_width, **plot_data,
+    )
+    return metrics, fig, out_back, out_fit
+
+
+def _fit_arrays(wavelength, flux, uncertainty, v, background_dict, si_vel_1e3,
+                vel_width, n_resol_neighbors, hvf_min_sep_kms, pvf_vel_frac):
+    """Single numerical implementation for best-fit and MC Ca realizations.
+
+    Velocity values, including the legacy hvf_min_sep_kms argument, use 10³ km/s.
+    """
+    wavelength, flux, uncertainty, v = (
+        np.asarray(values, dtype=float) for values in (wavelength, flux, uncertainty, v)
+    )
+    if any(values.ndim != 1 or values.shape != wavelength.shape
+           or not np.all(np.isfinite(values)) for values in (wavelength, flux, uncertainty, v)):
+        raise ValueError("Ca arrays must be finite, one-dimensional, and have matching shapes")
+    if np.any(uncertainty <= 0) or np.any(np.diff(wavelength) <= 0):
+        raise ValueError("Ca uncertainties must be positive and wavelengths strictly increasing")
+    if not np.isfinite(si_vel_1e3) or si_vel_1e3 == 0:
+        raise ValueError("Ca requires a finite, nonzero Si velocity")
+    if any(not np.isfinite(value) or value <= 0
+           for value in (vel_width, hvf_min_sep_kms, pvf_vel_frac)):
+        raise ValueError("Ca window width and velocity constraints must be finite and positive")
+    if isinstance(n_resol_neighbors, bool) or not isinstance(n_resol_neighbors, (int, np.integer)) or n_resol_neighbors < 2:
+        raise ValueError("n_resol_neighbors must be an integer at least 2")
     # ── background points ────────────────────────────────────────────────────
-    v = df_spec['vel_ca_ref'].values
     vr = background_dict['ca_red_side']
     vb = background_dict['ca_blue_side']
     hw = vel_width / 2.0
 
-    df_back = df_spec.loc[
-        ((v >= vr - hw) & (v <= vr + hw)) |
-        ((v >= vb - hw) & (v <= vb + hw))
-    ]
-    df_fit = df_spec.loc[(v >= vb) & (v <= vr)]
-
-    wl_back  = df_back['rest_wl'].values
-    y_back   = df_back['norm_fl'].values
-    ye_back  = df_back['norm_flerr'].values
-    wl_fit   = df_fit['rest_wl'].values
-    vel_fit  = df_fit['vel_ca_ref'].values
+    if not np.isfinite(vr) or not np.isfinite(vb) or vb >= vr:
+        raise ValueError("Ca continuum anchors must be finite and blue < red")
+    back_mask = ((v >= vr - hw) & (v <= vr + hw)) | ((v >= vb - hw) & (v <= vb + hw))
+    fit_mask = (v >= vb) & (v <= vr)
+    if np.count_nonzero(back_mask) < 2:
+        raise ValueError("Too few Ca background points")
+    if np.count_nonzero(fit_mask) < max(7, n_resol_neighbors):
+        raise ValueError("Too few Ca fit points")
+    wl_back, y_back, ye_back = wavelength[back_mask], flux[back_mask], uncertainty[back_mask]
+    wl_fit, vel_fit = wavelength[fit_mask], v[fit_mask]
 
     # ── instrumental resolution ───────────────────────────────────────────────
     resol_idx    = np.argsort(np.abs(wl_fit - rest_wl_ca2))[:n_resol_neighbors]
@@ -294,10 +330,14 @@ def fit_features(
     pars_back.add('a', value=0.0)
     pars_back.add('b', value=0.0)
     out_back    = model_back.fit(y_back, pars_back, x=wl_back, weights=1.0 / ye_back)
+    if not out_back.success:
+        raise RuntimeError(f"Ca continuum optimizer failed: {out_back.message}")
     back_vals   = lin_back(wl_fit, out_back.params['a'].value, out_back.params['b'].value)
 
-    y_fit  = (df_fit['norm_fl'].values / back_vals) - 1.0
-    ye_fit = df_fit['norm_flerr'].values / back_vals
+    if np.any(~np.isfinite(back_vals)) or np.any(back_vals <= 1e-12):
+        raise ValueError("Ca continuum fit must be finite and positive")
+    y_fit = flux[fit_mask] / back_vals - 1.0
+    ye_fit = uncertainty[fit_mask] / back_vals
 
     # ── PVF / HVF velocity bounds ─────────────────────────────────────────────
     v_si   = float(si_vel_1e3)          # e.g. -11.0 (10^3 km/s, negative)
@@ -320,18 +360,19 @@ def fit_features(
     pars.add('fwhm_hvf', value=8.0,  min=resol_vel_ca)
 
     def model_ca(params, wl):
-        pvf = (g_ca_pvf1(wl, params['a_pvf'], params['v_pvf'], params['fwhm_pvf']) +
-               g_ca_pvf2(wl, params['a_pvf'], params['v_pvf'], params['fwhm_pvf']) +
-               g_ca_pvf3(wl, params['a_pvf'], params['v_pvf'], params['fwhm_pvf']))
-        hvf = (g_ca_hvf1(wl, params['a_hvf'], params['v_hvf'], params['fwhm_hvf']) +
-               g_ca_hvf2(wl, params['a_hvf'], params['v_hvf'], params['fwhm_hvf']) +
-               g_ca_hvf3(wl, params['a_hvf'], params['v_hvf'], params['fwhm_hvf']))
-        return pvf + hvf
+        return ca_model_total(
+            wl, params['a_pvf'], params['v_pvf'], params['fwhm_pvf'],
+            params['a_hvf'], params['v_hvf'], params['fwhm_hvf'],
+        )
 
     def resid(params):
         return (y_fit - model_ca(params, wl_fit)) / ye_fit
 
     out_fit = minimize(resid, pars, method='least_squares')
+    if not out_fit.success:
+        raise RuntimeError(f"Ca II optimizer failed: {out_fit.message}")
+    if not np.all(np.isfinite(out_fit.residual)):
+        raise ValueError("Ca II optimizer returned non-finite residuals")
 
     # ── pEW ───────────────────────────────────────────────────────────────────
     wl_dense = np.linspace(wl_fit[0], wl_fit[-1], 500)
@@ -348,13 +389,10 @@ def fit_features(
     ew_raw     = np.abs(trapezoid(y_fit,  x=wl_fit))
 
     # ── SNR ───────────────────────────────────────────────────────────────────
-    try:
-        model_vals = model_ca(out_fit.params, wl_fit)
-        residuals  = y_fit - model_vals
-        rms        = np.sqrt(np.nanmean(residuals ** 2))
-        SNR_ca     = (np.nanmax(model_vals) - np.nanmin(model_vals)) / rms if rms > 0 else np.inf
-    except Exception:
-        SNR_ca = np.nan
+    model_vals = model_ca(out_fit.params, wl_fit)
+    residuals = y_fit - model_vals
+    rms = np.sqrt(np.mean(residuals ** 2))
+    SNR_ca = np.ptp(model_vals) / rms if rms > 0 else np.inf
 
     metrics = dict(
         ca_pvf_vel=out_fit.params['v_pvf'].value,
@@ -384,13 +422,12 @@ def fit_features(
                 metrics[f'ca_{component}_vel'], metrics[f'ca_{component}_fwhm'], rest_wl
             )
 
-    # ── summary figure ────────────────────────────────────────────────────────
-    fig = _make_fit_figure(
-        df_spec, background_dict, back_vals, out_back, out_fit,
-        wl_fit, vel_fit, y_fit, pvf_dense, hvf_dense, wl_dense, vel_width,
+    metrics.update({f"ca_{key}": value for key, value in optimizer_diagnostics(out_fit).items()})
+    return metrics, out_back, out_fit, dict(
+        back_vals=back_vals, wl_fit=wl_fit, vel_fit=vel_fit, y_fit=y_fit,
+        pvf_dense=pvf_dense, hvf_dense=hvf_dense, wl_dense=wl_dense,
     )
 
-    return metrics, fig, out_back, out_fit
 
 
 
@@ -501,11 +538,11 @@ def fit_features_mc(
     df_spec,
     background_dict,
     si_vel_1e3,
-    n_iter: int = 1000,
+    n_iter: int = _DEFAULTS.n_iterations,
     vel_width: float = 4.0,
-    n_resol_neighbors: int = 4,
-    hvf_min_sep_kms: float = 2.0,
-    pvf_vel_frac: float = 0.25,
+    n_resol_neighbors: int = _DEFAULTS.ca_n_resol_neighbors,
+    hvf_min_sep_kms: float = _DEFAULTS.ca_hvf_min_sep_kms,
+    pvf_vel_frac: float = _DEFAULTS.ca_pvf_vel_frac,
     mode: str = "resample",
     continuum_shift: float = 1.3,
     seed=None,
@@ -539,97 +576,25 @@ def fit_features_mc(
     def _make_flux(draw_mode):
         return common.mc_draw_flux(rng, means, sigs, draw_mode)
 
+    wavelength = df_spec['rest_wl'].to_numpy()
+    velocity = df_spec['vel_ca_ref'].to_numpy()
+
     def _single_fit(flux_draw, bg_draw):
-        df_draw = df_spec.copy()
-        df_draw.loc[:, 'norm_fl_draw'] = flux_draw
-
-        v   = df_draw['vel_ca_ref'].values
-        vr  = bg_draw['ca_red_side']
-        vb  = bg_draw['ca_blue_side']
-        hw  = vel_width / 2.0
-
-        df_back = df_draw.loc[((v >= vr - hw) & (v <= vr + hw)) | ((v >= vb - hw) & (v <= vb + hw))]
-        df_fit  = df_draw.loc[(v >= vb) & (v <= vr)]
-
-        if len(df_back) < 2:
-            raise ValueError("Too few background points")
-        if len(df_fit) < max(6, n_resol_neighbors):
-            raise ValueError("Too few fit points")
-
-        wl_back  = df_back['rest_wl'].values
-        y_back   = df_back['norm_fl_draw'].values
-        ye_back  = df_back['norm_flerr'].values
-        wl_fit   = df_fit['rest_wl'].values
-
-        resol_idx    = np.argsort(np.abs(wl_fit - rest_wl_ca2))[:n_resol_neighbors]
-        closest      = wl_fit[resol_idx]
-        resol_vel_ca = np.abs(wl_to_vel(closest.max(), rest_wl_ca2) - wl_to_vel(closest.min(), rest_wl_ca2))
-
-        model_back = Model(lin_back)
-        pars_back  = Parameters()
-        pars_back.add('a', value=0.0)
-        pars_back.add('b', value=0.0)
-        out_back   = model_back.fit(y_back, pars_back, x=wl_back, weights=1.0 / ye_back)
-        back_vals  = lin_back(wl_fit, out_back.params['a'].value, out_back.params['b'].value)
-
-        y_fit  = (df_fit['norm_fl_draw'].values / back_vals) - 1.0
-        ye_fit = df_fit['norm_flerr'].values / back_vals
-
-        v_si   = float(si_vel_1e3)
-        margin = pvf_vel_frac * abs(v_si)
-        pvf_v_min = v_si - margin
-        pvf_v_max = v_si + margin
-        hvf_v_max = v_si - float(hvf_min_sep_kms)
-
-        pars = Parameters()
-        pars.add('a_pvf',    value=-0.4, max=0.0)
-        pars.add('v_pvf',    value=v_si, min=pvf_v_min, max=pvf_v_max)
-        pars.add('fwhm_pvf', value=8.0,  min=resol_vel_ca)
-        pars.add('a_hvf',    value=-0.2, max=0.0)
-        pars.add('v_hvf',    value=v_si - 4.0, max=hvf_v_max)
-        pars.add('fwhm_hvf', value=8.0,  min=resol_vel_ca)
-
-        def model_ca(params, wl):
-            pvf = (g_ca_pvf1(wl, params['a_pvf'], params['v_pvf'], params['fwhm_pvf']) +
-                   g_ca_pvf2(wl, params['a_pvf'], params['v_pvf'], params['fwhm_pvf']) +
-                   g_ca_pvf3(wl, params['a_pvf'], params['v_pvf'], params['fwhm_pvf']))
-            hvf = (g_ca_hvf1(wl, params['a_hvf'], params['v_hvf'], params['fwhm_hvf']) +
-                   g_ca_hvf2(wl, params['a_hvf'], params['v_hvf'], params['fwhm_hvf']) +
-                   g_ca_hvf3(wl, params['a_hvf'], params['v_hvf'], params['fwhm_hvf']))
-            return pvf + hvf
-
-        out = minimize(lambda p: (y_fit - model_ca(p, wl_fit)) / ye_fit, pars, method='least_squares')
-
-        wl_dense  = np.linspace(wl_fit[0], wl_fit[-1], 500)
-        pvf_d = (g_ca_pvf1(wl_dense, out.params['a_pvf'].value, out.params['v_pvf'].value, out.params['fwhm_pvf'].value) +
-                 g_ca_pvf2(wl_dense, out.params['a_pvf'].value, out.params['v_pvf'].value, out.params['fwhm_pvf'].value) +
-                 g_ca_pvf3(wl_dense, out.params['a_pvf'].value, out.params['v_pvf'].value, out.params['fwhm_pvf'].value))
-        hvf_d = (g_ca_hvf1(wl_dense, out.params['a_hvf'].value, out.params['v_hvf'].value, out.params['fwhm_hvf'].value) +
-                 g_ca_hvf2(wl_dense, out.params['a_hvf'].value, out.params['v_hvf'].value, out.params['fwhm_hvf'].value) +
-                 g_ca_hvf3(wl_dense, out.params['a_hvf'].value, out.params['v_hvf'].value, out.params['fwhm_hvf'].value))
-
-        ew_pvf   = np.abs(trapezoid(pvf_d, x=wl_dense))
-        ew_hvf   = np.abs(trapezoid(hvf_d, x=wl_dense))
-        ew_total = np.abs(trapezoid(pvf_d + hvf_d, x=wl_dense))
-        ew_raw   = np.abs(trapezoid(y_fit, x=wl_fit))
-
-        return dict(
-            ca_pvf_vel=out.params['v_pvf'].value,
-            ca_pvf_fwhm=out.params['fwhm_pvf'].value,
-            ca_hvf_vel=out.params['v_hvf'].value,
-            ca_hvf_fwhm=out.params['fwhm_hvf'].value,
-            ca_pvf_ew=ew_pvf,
-            ca_hvf_ew=ew_hvf,
-            ca_total_ew=ew_total,
-            ca_ew_raw=ew_raw,
-            ca_R_ca=ew_hvf / ew_pvf if ew_pvf > 0 else np.nan,
+        metrics, _, _, _ = _fit_arrays(
+            wavelength, flux_draw, sigs, velocity, bg_draw, si_vel_1e3,
+            vel_width, n_resol_neighbors, hvf_min_sep_kms, pvf_vel_frac,
         )
+        metrics.update({key.removeprefix("ca_"): value for key, value in metrics.items()
+                        if key.startswith("ca_at_bound_") or key == "ca_any_at_bound"})
+        return metrics
 
     metric_names = [
         'ca_pvf_vel', 'ca_pvf_fwhm',
         'ca_hvf_vel', 'ca_hvf_fwhm',
         'ca_pvf_ew', 'ca_hvf_ew', 'ca_total_ew', 'ca_ew_raw',
         'ca_R_ca',
+        'any_at_bound',
+        *[f'at_bound_{name}' for name in ('a_pvf', 'v_pvf', 'fwhm_pvf', 'a_hvf', 'v_hvf', 'fwhm_hvf')],
     ]
 
 
@@ -645,7 +610,13 @@ def fit_features_mc(
         sfx = mode_suffix[draw_mode]
         summary[f'n_success_{sfx}'] = int(all_summaries[draw_mode]['ca_pvf_vel']['n'])
         summary[f'n_fail_{sfx}']    = int(failed_draws[draw_mode])
+        summary[f'failure_reasons_{sfx}'] = " | ".join(
+            f"{count}x {reason}" for reason, count in failure_reasons[draw_mode].most_common()
+        )
+        summary.update(mc_boundary_summary(all_results[draw_mode], sfx))
         for mname, sdict in all_summaries[draw_mode].items():
+            if mname.startswith('at_bound_') or mname == 'any_at_bound':
+                continue
             for stat in ('med', 'hi', 'lo', 'mean', 'std', 'gap', 'flag'):
                 summary[f'{mname}_{stat}_{sfx}'] = sdict[stat]
 
@@ -691,7 +662,7 @@ def fit_features_mc(
                     ax.set_xlim(p1 - pad, p99 + pad)
 
         ax.set_title(title)
-        if mname == 'ca_pvf_vel':
+        if mname == 'ca_pvf_vel' and arrays:
             ax.legend(fontsize=7)
 
     fig.tight_layout()
@@ -930,9 +901,9 @@ def interactive_refine_background_and_fit(
     spec_meta=None,
     vel_width: float = 4.0,
     wl_xlim=(7000.0, 9300.0),
-    n_resol_neighbors: int = 3,
-    hvf_min_sep_kms: float = 2.0,
-    pvf_vel_frac: float = 0.25,
+    n_resol_neighbors: int = _DEFAULTS.ca_n_resol_neighbors,
+    hvf_min_sep_kms: float = _DEFAULTS.ca_hvf_min_sep_kms,
+    pvf_vel_frac: float = _DEFAULTS.ca_pvf_vel_frac,
     manual_start: bool = False,
 ):
     """

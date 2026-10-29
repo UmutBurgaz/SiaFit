@@ -60,10 +60,14 @@ from .common import (
 from .common import (
     wl_to_vel as wl_to_vel,
 )
+from .config import FitConfig
 from .coverage import RequiredInterval
+from .quality import mc_boundary_summary, optimizer_diagnostics
 from .style import apply_plot_style
 
 apply_plot_style()
+
+_DEFAULTS = FitConfig()
 
 speed_of_light = 2.99792e5  # km/s
 rest_wl_sil1_1 = 6347.10
@@ -147,9 +151,9 @@ def find_background_regions(
     dv_kms_blue=-1000.0,
     min_sep=5,
     max_attempts=5,
-    sil6355_red_bounds_kms=(-15000.0, 15000.0),
-    sil6355_blue_bounds_kms=(-30000.0, -15000.0),
-    sil5972_blue_bounds_kms=(-30000.0, -10000.0),
+    sil6355_red_bounds_kms=_DEFAULTS.sil6355_red_bounds_kms,
+    sil6355_blue_bounds_kms=_DEFAULTS.sil6355_blue_bounds_kms,
+    sil5972_blue_bounds_kms=_DEFAULTS.sil5972_blue_bounds_kms,
 ):
     """
     Locate local continuum (background) anchor points for the Si II features
@@ -373,9 +377,9 @@ def fit_features(
     df_spec,
     background_dict,
     vel_width: float = 4.0,
-    n_resol_neighbors: int = 4,
-    k_vel12_bounds: tuple[float, float] = (0.75, 1.25),
-    k_fwhm12_bounds: tuple[float, float] = (0.25, 1.75),
+    n_resol_neighbors: int = _DEFAULTS.n_resol_neighbors,
+    k_vel12_bounds: tuple[float, float] = _DEFAULTS.k_vel12_bounds,
+    k_fwhm12_bounds: tuple[float, float] = _DEFAULTS.k_fwhm12_bounds,
 ):
     """
     Jointly fit Si II λ6355 and λ5972 with shared k-parameters (deterministic).
@@ -390,14 +394,14 @@ def fit_features(
     background_dict : dict
             From `find_background_regions` (contains velocity bounds).
     vel_width : float, optional
-            Half-width of the background windows (10^3 km/s). Default 4.0.
+            Full width of each background window (10^3 km/s). Default 4.0.
     n_resol_neighbors : int, optional
             Number of nearest points around each line’s rest wavelength used to
-            estimate instrumental resolution in velocity space. Default 4.
+            estimate instrumental resolution in velocity space. Default 3.
     k_vel12_bounds : (float, float), optional
-            (min, max) bounds for k_vel12. Default (0.75, 1.25).
+            (min, max) bounds for k_vel12. Default (0.60, 1.30).
     k_fwhm12_bounds : (float, float), optional
-            (min, max) bounds for k_fwhm12. Default (0.25, 1.75).
+            (min, max) bounds for k_fwhm12. Default (0.60, 1.25).
 
     Returns
     -------
@@ -821,13 +825,9 @@ def fit_features(
 
     return (
         dict(
-            optimizer_success=bool(out_fit_sil.success),
-            optimizer_message=str(out_fit_sil.message),
-            optimizer_chisqr=out_fit_sil.chisqr,
-            optimizer_redchi=out_fit_sil.redchi,
+            **optimizer_diagnostics(out_fit_sil),
             optimizer_aic=out_fit_sil.aic,
             optimizer_bic=out_fit_sil.bic,
-            optimizer_nfev=out_fit_sil.nfev,
             sil6355_vel=out_fit_sil.params["v_sil1_1"].value,
             sil6355_vel_err=out_fit_sil.params["v_sil1_1"].stderr,
             sil6355_fwhm=out_fit_sil.params["fwhm_sil1_1"].value,
@@ -872,11 +872,11 @@ def fit_features(
 def fit_features_mc(
     df_spec,
     background_dict,
-    n_iter: int = 1000,
+    n_iter: int = _DEFAULTS.n_iterations,
     vel_width: float = 4.0,
-    n_resol_neighbors: int = 4,
-    k_vel12_bounds: tuple[float, float] = (0.75, 1.25),
-    k_fwhm12_bounds: tuple[float, float] = (0.25, 1.75),
+    n_resol_neighbors: int = _DEFAULTS.n_resol_neighbors,
+    k_vel12_bounds: tuple[float, float] = _DEFAULTS.k_vel12_bounds,
+    k_fwhm12_bounds: tuple[float, float] = _DEFAULTS.k_fwhm12_bounds,
     mode: str = "resample",
     continuum_shift: float = 1.3,
     seed=None,
@@ -1079,6 +1079,8 @@ def fit_features_mc(
         ew2_raw = np.abs(trapezoid(y_fit_sil2, x=wl_fit_sil2))
 
         return dict(
+            **{name: value for name, value in optimizer_diagnostics(out).items()
+               if name.startswith("at_bound_") or name == "any_at_bound"},
             sil6355_vel=out.params["v_sil1_1"].value,
             sil5972_vel=out.params["v_sil2_1"].value,
             sil6355_fwhm=out.params["fwhm_sil1_1"].value,
@@ -1102,6 +1104,10 @@ def fit_features_mc(
         "sil5972_ew_raw",
         "r_sil",
         "r_sil_raw",
+        "any_at_bound",
+        *[f"at_bound_{name}" for name in (
+            "a_sil1_1", "v_sil1_1", "fwhm_sil1_1", "k_vel12", "k_fwhm12", "a_sil2_1",
+        )],
     ]
 
 
@@ -1129,7 +1135,10 @@ def fit_features_mc(
         summary[f"failure_reasons_{suffix}"] = " | ".join(
             f"{count}x {reason}" for reason, count in failure_reasons[draw_mode].most_common()
         )
+        summary.update(mc_boundary_summary(all_results[draw_mode], suffix))
         for metric_name, stats_dict in all_summaries[draw_mode].items():
+            if metric_name.startswith("at_bound_") or metric_name == "any_at_bound":
+                continue
             summary[f"{metric_name}_med_{suffix}"] = stats_dict["med"]
             summary[f"{metric_name}_hi_{suffix}"] = stats_dict["hi"]
             summary[f"{metric_name}_lo_{suffix}"] = stats_dict["lo"]
@@ -1685,9 +1694,9 @@ def interactive_refine_background_and_fit(
     initial_background_dict,
     vel_width: float = 4.0,
     wl_xlim=(5250.0, 6750.0),
-    n_resol_neighbors: int = 3,
-    k_vel12_bounds: tuple[float, float] = (0.75, 1.25),
-    k_fwhm12_bounds: tuple[float, float] = (0.25, 1.75),
+    n_resol_neighbors: int = _DEFAULTS.n_resol_neighbors,
+    k_vel12_bounds: tuple[float, float] = _DEFAULTS.k_vel12_bounds,
+    k_fwhm12_bounds: tuple[float, float] = _DEFAULTS.k_fwhm12_bounds,
     manual_start: bool = False,
 ):
     """Review continuum anchors and a joint fit with only essential prompts.
