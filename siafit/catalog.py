@@ -117,12 +117,14 @@ def load_catalog(
         if not spectra_path.is_absolute():
             spectra_path = (Path.cwd() / spectra_path).resolve()
 
-    # Restart keys are identifiers, even when they look numeric or like an NA token.
-    table = pd.read_csv(
-        catalog_path,
-        comment="#",
-        converters={column: str for column in COLUMN_ALIASES["record_id"]},
-    )
+    table = pd.read_csv(catalog_path, comment="#")
+    identifier_columns = [column for column in COLUMN_ALIASES["record_id"] if column in table]
+    if identifier_columns:
+        # Keep literal identifiers while retaining numeric and NA inference elsewhere.
+        table[identifier_columns] = pd.read_csv(
+            catalog_path, comment="#", usecols=identifier_columns,
+            dtype=str, keep_default_na=False,
+        )
     if table.empty:
         raise ValueError(f"Catalogue contains no spectra: {catalog_path}")
 

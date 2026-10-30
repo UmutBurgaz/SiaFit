@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "siafit"
-version = "1.1.0"
+version = "1.1.1"
 description = "Si II 6355/5972 and Ca II NIR fitting for supernova spectra"
 readme = "README.md"
 license = "MIT"
