@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -188,6 +188,14 @@ def _prepare(record: SpectrumRecord, config: FitConfig):
 
 
 def _find_background(df_spec, config: FitConfig):
+    if config.anchor_strategy == "profile":
+        from .profile import find_background
+
+        return find_background(df_spec, config)
+    if config.anchor_strategy == "adaptive":
+        from .adaptive import find_background
+
+        return find_background(df_spec, config)
     return core.find_background_regions(
         df_spec,
         config.sil6355_red_initial,
@@ -210,7 +218,9 @@ def select_background(
     config: FitConfig,
 ) -> BackgroundSelection:
     """Select automatic, reviewed, or fully manual background anchors."""
-    background, anchor_figure = _find_background(df_spec, config)
+    background, anchor_figure = _find_background(
+        df_spec, config if mode == 'auto' else replace(config, anchor_strategy='legacy'),
+    )
     if mode == "auto":
         background_figure = core.preview_background_all(
             df_spec, background, vel_width=config.vel_width
@@ -222,6 +232,10 @@ def select_background(
             anchor_figure=anchor_figure,
         )
 
+    # User-adjusted anchors must not inherit automatic candidate bounds.
+    for key in tuple(background):
+        if key.startswith("sil6355_velocity_"):
+            background.pop(key)
     background, background_figure, metrics, fit_figure, vel_width = (
         core.interactive_refine_background_and_fit(
             df_spec,
@@ -256,6 +270,9 @@ def _background_row(
     row["background_vel_width"] = selection.vel_width
     for key in BACKGROUND_KEYS + BACKGROUND_STATUS_KEYS:
         row[f"background_{key}"] = selection.background.get(key)
+    for key, value in selection.background.items():
+        if key.startswith(("adaptive_", "sil6355_velocity_")) or key == "anchor_strategy":
+            row[f"background_{key}"] = value
     statuses = [selection.background.get(key) for key in BACKGROUND_STATUS_KEYS]
     row["background_qc_flag"] = int(
         any(
@@ -304,6 +321,8 @@ def _fit_spectrum(
             seed=seed,
         )
     metrics = dict(metrics)
+    metrics.setdefault('si_fit_method', 'joint_legacy_validated'
+                       if background.get('adaptive_policy') == 'validated_legacy' else 'joint_legacy')
     metrics.update(review_flags(
         metrics, mc_summary, df_spec.attrs.get("uncertainty_source"),
         config.redchi_warning_threshold,
@@ -327,6 +346,10 @@ def _background_from_record(
     record: SpectrumRecord, *, default_vel_width: float = 4.0
 ) -> tuple[dict[str, Any], float]:
     background = {}
+    for key, value in record.metadata.items():
+        if key.startswith(("background_adaptive_", "background_sil6355_velocity_")) or key == "background_anchor_strategy":
+            if pd.notna(value):
+                background[key.removeprefix("background_")] = value
     for key in BACKGROUND_KEYS:
         column = f"background_{key}"
         if column not in record.metadata or pd.isna(record.metadata[column]):

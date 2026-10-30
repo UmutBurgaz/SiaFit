@@ -48,6 +48,16 @@ def mc_boundary_summary(results, suffix):
 def review_flags(metrics, mc_summary, uncertainty_source, redchi_threshold, *, prefix=""):
     """Explain review triggers. These flags do not reject or remove measurements."""
     reasons = []
+    if metrics.get('sil5972_fit_success') == 0:
+        reasons.append('secondary_line_fit_unavailable')
+    elif metrics.get('sil5972_profile_review_flag'):
+        reasons.append('weak_secondary_profile')
+    velocity_error = metrics.get('sil6355_vel_err')
+    primary_snr = metrics.get('sil6355_snr')
+    if primary_snr is not None and np.isfinite(primary_snr) and primary_snr < 2:
+        reasons.append('weak_primary_line')
+    if velocity_error is not None and np.isfinite(velocity_error) and velocity_error > 3:
+        reasons.append('large_primary_velocity_uncertainty')
     if metrics.get(f"{prefix}any_at_bound", 0):
         reasons.append("parameter_at_bound")
     if metrics.get(f"{prefix}covariance_available") == 0:

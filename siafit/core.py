@@ -410,6 +410,12 @@ def fit_features(
     fig : matplotlib.figure.Figure
             Summary plot (data, background, model components).
     """
+    if background_dict.get("anchor_strategy") == "profile":
+        from .profile import fit_features as fit_profiles
+
+        return fit_profiles(df_spec, background_dict, k_vel12_bounds=k_vel12_bounds,
+                            k_fwhm12_bounds=k_fwhm12_bounds, n_resol_neighbors=n_resol_neighbors,
+                            vel_width=vel_width)
     df_spec_for_back_sil1 = df_spec.loc[
         (
             (df_spec["vel_sil1_1"] >= background_dict["sil6355_blue_side"] - vel_width / 2.0)
@@ -493,7 +499,11 @@ def fit_features(
 
     pars_fit_sil = Parameters()
     pars_fit_sil.add("a_sil1_1", value=-1.1, max=0.0)
-    pars_fit_sil.add("v_sil1_1", value=-11.0, max=0.0)
+    pars_fit_sil.add(
+        "v_sil1_1", value=background_dict.get("sil6355_velocity_initial", -11.0),
+        min=background_dict.get("sil6355_velocity_min", -np.inf),
+        max=background_dict.get("sil6355_velocity_max", 0.0),
+    )
     pars_fit_sil.add("fwhm_sil1_1", value=8.0, min=resol_vel_sil1)
     pars_fit_sil.add("a_sil1_2", expr="a_sil1_1")
     pars_fit_sil.add("v_sil1_2", expr="v_sil1_1")
@@ -903,6 +913,13 @@ def fit_features_mc(
     fig : matplotlib.figure.Figure
     """
 
+    if background_dict.get("anchor_strategy") == "profile":
+        from .profile import fit_features_mc as sample_profiles
+
+        return sample_profiles(df_spec, background_dict, n_iter=n_iter, mode=mode,
+                               continuum_shift=continuum_shift, seed=seed,
+                               k_vel12_bounds=k_vel12_bounds, k_fwhm12_bounds=k_fwhm12_bounds,
+                               n_resol_neighbors=n_resol_neighbors, vel_width=vel_width)
     rng = np.random.default_rng(seed)
 
     valid_modes = {"resample", "shift", "shift_resample", "all"}
@@ -1011,7 +1028,11 @@ def fit_features_mc(
 
         pars_fit_sil = Parameters()
         pars_fit_sil.add("a_sil1_1", value=-1.1, max=0.0)
-        pars_fit_sil.add("v_sil1_1", value=-11.0, max=0.0)
+        pars_fit_sil.add(
+            "v_sil1_1", value=background_dict.get("sil6355_velocity_initial", -11.0),
+            min=background_dict.get("sil6355_velocity_min", -np.inf),
+            max=background_dict.get("sil6355_velocity_max", 0.0),
+        )
         pars_fit_sil.add("fwhm_sil1_1", value=8.0, min=resol_vel_sil1)
         pars_fit_sil.add("a_sil1_2", expr="a_sil1_1")
         pars_fit_sil.add("v_sil1_2", expr="v_sil1_1")

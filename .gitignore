@@ -17,7 +17,6 @@ fitted/
 example_output/
 .test-output-*/
 
-# Local credentials, editor state, and review artifacts
 .env
 .env.*
 !.env.example
@@ -29,3 +28,4 @@ example_output/
 htmlcov/
 verification_output/
 .test-tmp*/
+RELEASE_CHECKS.md

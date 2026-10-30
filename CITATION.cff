@@ -6,7 +6,7 @@ abstract: "Si II 6355/5972 and Ca II NIR fitting for supernova spectra."
 authors:
   - family-names: Burgaz
     given-names: Umut
-version: 1.0.0
+version: 1.1.0
 license: MIT
 keywords:
   - supernovae

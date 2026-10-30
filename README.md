@@ -48,6 +48,9 @@ For Ca-only data without a `si_velocity` catalogue column, pass `--si-velocity V
 
 `--mode auto` uses automatic continuum anchors. `--mode review` offers interactive approval and adjustment. `--mode manual` starts with manual continuum selection. Interactive modes require a graphical Matplotlib backend.
 
+Version 1.1.0 improves automatic fitting of fast, blue-side Si II absorption.
+Use `--anchor-strategy legacy` to retain the previous automatic fitting method.
+
 ## Input spectra and catalogue
 
 Spectra are whitespace- or comma-separated ASCII tables. The first two columns are observed wavelength in Å and flux. By default, a third column is treated as 1σ flux uncertainty; extra columns are ignored. Use `input_format=flux` in the catalogue or `--input-format flux` when the third column has another meaning. Invalid, missing, or non-positive uncertainties are estimated from the flux. Incomplete rows, including rows before the first complete pixel, are skipped.
@@ -73,10 +76,7 @@ A successful run means the workflow completed; it does not guarantee that every
 measurement passes scientific quality checks. Inspect `background_qc_flag`,
 `mc_qc_flag`, the joint-workflow `si_`/`ca_` quality flags, successful draw counts,
 and failure reasons before using the results. Flagged continuum anchors may need
-review or manual selection. In the bundled examples, the first spectrum's automatic
-Si anchors can leave too few λ5972 fit points for Monte Carlo draws; use review/manual
-mode to inspect and adjust its continuum rather than treating missing uncertainties
-as valid measurements.
+review or manual selection. Do not treat missing uncertainties as valid measurements.
 
 Velocities are in 10³ km/s; equivalent widths are in Å, FWHM are available both in 10³ km/s and Å. Ca is modeled as photospheric and high-velocity triplets. The three lines within each triplet share an amplitude, velocity, and width; the two triplets have separate parameters. The photospheric velocity is constrained to within 25% of Si II λ6355. The high-velocity component is at least 2,000 km/s faster than Si II λ6355, which does not guarantee that separation from the fitted Ca photospheric component.
 
@@ -121,8 +121,8 @@ the existing shared full-spectrum noise realizations in joint runs.
 The legacy field `ca_hvf_min_sep_kms` retains its original units of **10³ km/s**:
 `2.0` means 2,000 km/s. Existing configuration fields and CSV units are preserved.
 Direct low-level fitter defaults now match `FitConfig` (including 3 resolution
-neighbors and 100 MC draws). Pipeline defaults and physical constraints are
-unchanged; direct callers needing historical settings can pass them explicitly.
+neighbors and 100 MC draws). Ca physical constraints are unchanged; direct
+callers needing historical settings can pass them explicitly.
 
 ## Python API
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from . import __version__
 from .config import FitConfig
 
 
@@ -31,6 +32,10 @@ def _add_catalog_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_preparation_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--anchor-strategy", choices=("legacy", "adaptive", "profile"), default="profile",
+        help="Automatic Si profiles (default), legacy anchors, or adaptive trough selection",
+    )
     parser.add_argument(
         "--si-velocity", type=float, default=None,
         help="Si II 6355 velocity in 10³ km/s for Ca-only fitting; catalogue values take precedence",
@@ -90,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="siafit",
         description="Fit Si II 6355/5972 and Ca II NIR features in supernova spectra",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 1.0.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run = subparsers.add_parser("run", help="Select backgrounds and fit spectra end to end")
@@ -123,6 +128,7 @@ def _config_from_args(args: argparse.Namespace) -> FitConfig:
     return FitConfig(
         mode=getattr(args, "mode", "auto"),
         features=args.features,
+        anchor_strategy=args.anchor_strategy,
         si_velocity=args.si_velocity,
         input_format=args.input_format,
         vexp=args.vexp,

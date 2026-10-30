@@ -116,6 +116,9 @@ def _background_row(record, output_dir, df_spec, config, clip, si_selection, ca_
         row["background_vel_width"] = si_selection.vel_width
         for key in si.BACKGROUND_KEYS + si.BACKGROUND_STATUS_KEYS:
             row[f"background_{key}"] = si_selection.background.get(key)
+        for key, value in si_selection.background.items():
+            if key.startswith(("adaptive_", "sil6355_velocity_")) or key == "anchor_strategy":
+                row[f"background_{key}"] = value
         row["background_qc_flag"] = int(any(
             si_selection.background.get(key) not in {"automatic", "manual", "derived_from_sil6355_blue"}
             for key in si.BACKGROUND_STATUS_KEYS

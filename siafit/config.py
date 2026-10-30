@@ -45,8 +45,11 @@ class FitConfig:
     continuum_shift: float = 1.3
     seed: int | None = None
     redchi_warning_threshold: float | None = 10.0
+    anchor_strategy: str = "profile"
 
     def validate(self) -> None:
+        if self.anchor_strategy not in {"legacy", "adaptive", "profile"}:
+            raise ValueError("anchor_strategy must be 'legacy', 'adaptive', or 'profile'")
         def finite_number(name: str, value: object) -> None:
             if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(value):
                 raise ValueError(f"{name} must be a finite number")

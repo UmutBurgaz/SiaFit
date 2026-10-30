@@ -140,7 +140,7 @@ def test_mc_failed_draw_does_not_partially_append_metrics():
 def test_joint_example_records_scientific_review_flags_without_rejecting_row(tmp_path):
     summary = run_catalog(
         ROOT / "example_catalog.csv", tmp_path,
-        config=FitConfig(features="all", n_iterations=2, seed=42), start=2, end=3,
+        config=FitConfig(features="all", n_iterations=2, seed=42, anchor_strategy="legacy"), start=2, end=3,
     )
     assert summary.succeeded == 1
     row = pd.read_csv(tmp_path / "fit_results.csv").iloc[0]

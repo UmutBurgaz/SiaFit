@@ -5,4 +5,5 @@ include example_catalog.csv
 recursive-include examples *.py
 recursive-include spectra *.DAT *.md
 recursive-include tests *.py
+recursive-include tools *.py
 global-exclude .DS_Store *.py[cod]
