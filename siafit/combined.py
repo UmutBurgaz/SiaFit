@@ -35,17 +35,12 @@ def _prior_velocity(record, config):
 
 
 def _select_ca_background(df_spec, record, config, si_velocity):
-    background, anchor_figure = ca.find_background_regions(
-        df_spec,
-        ca_red_side_init=config.ca_red_initial,
-        ca_blue_side_init=config.ca_blue_initial,
-        v_window_kms=config.ca_background_search_window_kms,
-        dv_kms_red=config.ca_background_search_step_kms,
-        dv_kms_blue=-config.ca_background_search_step_kms,
-        max_attempts=config.ca_background_search_attempts,
-        ca_red_bounds_kms=config.ca_red_bounds_kms,
-        ca_blue_bounds_kms=config.ca_blue_bounds_kms,
-    )
+    if record.mode == "manual":
+        background, anchor_figure = {}, None
+    else:
+        from .tangent import find_ca_background
+
+        background, anchor_figure = find_ca_background(df_spec, config, si_velocity)
     if record.mode == "auto":
         preview = ca.preview_background(
             df_spec, background, vel_width=config.vel_width, si_vel_1e3=si_velocity
@@ -116,9 +111,10 @@ def _background_row(record, output_dir, df_spec, config, clip, si_selection, ca_
         row["background_vel_width"] = si_selection.vel_width
         for key in si.BACKGROUND_KEYS + si.BACKGROUND_STATUS_KEYS:
             row[f"background_{key}"] = si_selection.background.get(key)
-        for key, value in si_selection.background.items():
-            if key.startswith(("adaptive_", "sil6355_velocity_")) or key == "anchor_strategy":
-                row[f"background_{key}"] = value
+        for key in si.AUTOMATIC_BACKGROUND_KEYS:
+            column = f"background_{key}"
+            if key in si_selection.background or column in row:
+                row[column] = si_selection.background.get(key)
         row["background_qc_flag"] = int(any(
             si_selection.background.get(key) not in {"automatic", "manual", "derived_from_sil6355_blue"}
             for key in si.BACKGROUND_STATUS_KEYS
@@ -126,6 +122,10 @@ def _background_row(record, output_dir, df_spec, config, clip, si_selection, ca_
     row["ca_background_vel_width"] = ca_selection.vel_width
     for key in CA_KEYS + CA_STATUS_KEYS:
         row[f"background_{key}"] = ca_selection.background.get(key)
+    for column, key in (("background_ca_filter_continuum", "filter_continuum"),
+                        ("background_ca_hvf_velocity_initial", "ca_hvf_velocity_initial")):
+        if key in ca_selection.background or column in row:
+            row[column] = ca_selection.background.get(key)
     row["ca_background_qc_flag"] = int(any(
         ca_selection.background.get(key) not in {"automatic", "manual"}
         for key in CA_STATUS_KEYS
@@ -146,6 +146,14 @@ def _saved_ca_selection(record, df_spec, si_velocity, config):
         column = f"background_{key}"
         if column in record.metadata:
             background[key] = str(record.metadata[column])
+    if si._as_bool(record.metadata.get("background_ca_filter_continuum"), False):
+        background["filter_continuum"] = True
+        hvf_initial = record.metadata.get("background_ca_hvf_velocity_initial")
+        if hvf_initial is not None:
+            hvf_initial = float(hvf_initial)
+            if not np.isfinite(hvf_initial):
+                raise ValueError("background_ca_hvf_velocity_initial must be finite")
+            background["ca_hvf_velocity_initial"] = hvf_initial
     width = float(record.metadata.get("ca_background_vel_width", config.vel_width))
     if not np.isfinite(width) or width <= 0:
         raise ValueError("ca_background_vel_width must be finite and positive")

@@ -7,11 +7,9 @@ import numpy as np
 import pandas as pd
 from lmfit import Model, Parameters, minimize
 from scipy.integrate import trapezoid
-from scipy.interpolate import make_splrep
 
 from . import common
 from .common import (
-    _choose_unique_anchor,
     _mc_plot_bin_edges,
     autoscale_ylim_for_xlim,
     lin_back,
@@ -32,15 +30,8 @@ rest_wl_ca_ref = rest_wl_ca1
 
 
 def required_rest_intervals(config):
-    """Ca coverage from both bounded anchor-search regions and fit span."""
-    blue_search_min = max(
-        config.ca_blue_bounds_kms[0],
-        config.ca_blue_initial * 1000.0 - config.ca_background_search_window_kms,
-    )
-    red_search_max = min(
-        config.ca_red_bounds_kms[1],
-        config.ca_red_initial * 1000.0 + config.ca_background_search_window_kms,
-    )
+    """Minimum Ca coverage, including the continuum-window margin."""
+    blue_search_min, red_search_max = config.ca_coverage_bounds_kms
     half_width_kms = config.vel_width * 500.0
     lower = vel_to_wl((blue_search_min - half_width_kms) / 1000.0, rest_wl_ca_ref)
     upper = vel_to_wl((red_search_max + half_width_kms) / 1000.0, rest_wl_ca_ref)
@@ -107,130 +98,11 @@ def ca_model_total(x, a_pvf, v_pvf, fwhm_pvf, a_hvf, v_hvf, fwhm_hvf):
 
 
 
-def find_background_regions(
-    df_spec,
-    ca_red_side_init,
-    ca_blue_side_init,
-    v_window_kms=10000.0,
-    dv_kms_red=+1000.0,
-    dv_kms_blue=-1000.0,
-    min_sep=5,
-    max_attempts=5,
-    ca_red_bounds_kms=_DEFAULTS.ca_red_bounds_kms,
-    ca_blue_bounds_kms=_DEFAULTS.ca_blue_bounds_kms,
-):
-    """
-    Locate Ca II NIR continuum anchor points using spline derivatives.
-
-    Parameters
-    ----------
-    df_spec : DataFrame
-        From prepare_spectrum. Must contain rest_wl, norm_fl_smooth_flattened.
-    ca_red_side_init, ca_blue_side_init : float
-        Initial guesses in 10^3 km/s (relative to rest_wl_ca_ref).
-    v_window_kms : float
-        Half-width of the spline-maximum search window (km/s).
-    dv_kms_red, dv_kms_blue : float
-        Step for bi-directional retries (km/s).
-    min_sep : int
-        Minimum pixel separation between anchors.
-    max_attempts : int
-        Bi-directional retry attempts per anchor.
-    ca_red_bounds_kms, ca_blue_bounds_kms : (float, float)
-        Velocity bounds (km/s) for each anchor.
-
-    Returns
-    -------
-    results : dict
-        Keys: ca_red_side, ca_blue_side, status_ca_red_side, status_ca_blue_side
-        All velocities in 10^3 km/s.
-    fig : Figure
-        Diagnostic plot.
-    """
-    y_spl = make_splrep(df_spec['rest_wl'], df_spec['norm_fl_smooth_flattened'], s=0, k=3)
-    y_spl_1d = y_spl.derivative(nu=1)
-    y_spl_2d = y_spl.derivative(nu=2)
-
-    wl_grid = df_spec['rest_wl'].values
-    exclude_idx = []
-    def wl_to_idx(w): return int(np.argmin(np.abs(wl_grid - w)))
-
-    r_wl, st_r = _choose_unique_anchor(
-        y_spl_1d, y_spl_2d, ca_red_side_init, rest_wl_ca_ref,
-        v_window_kms, dv_kms_red, wl_grid, exclude_idx, min_sep, max_attempts, ca_red_bounds_kms
-    )
-    exclude_idx.append(wl_to_idx(r_wl))
-
-    b_wl, st_b = _choose_unique_anchor(
-        y_spl_1d, y_spl_2d, ca_blue_side_init, rest_wl_ca_ref,
-        v_window_kms, dv_kms_blue, wl_grid, exclude_idx, min_sep, max_attempts, ca_blue_bounds_kms
-    )
-    exclude_idx.append(wl_to_idx(b_wl))
-
-    results = {
-        'ca_red_side':       wl_to_vel(r_wl, rest_wl_ca_ref),
-        'ca_blue_side':      wl_to_vel(b_wl, rest_wl_ca_ref),
-        'status_ca_red_side':  st_r,
-        'status_ca_blue_side': st_b,
-    }
-
-    # Initial-guess wavelengths for plotting
-    r_init_wl = vel_to_wl(ca_red_side_init,  rest_wl_ca_ref)
-    b_init_wl = vel_to_wl(ca_blue_side_init, rest_wl_ca_ref)
-
-    wl_plot = df_spec['rest_wl']
-
-    fig, axs = plt.subplots(ncols=1, nrows=3, sharex='col', figsize=(6, 8))
-    ax_ca, ax_d1, ax_d2 = axs.flatten()
-
-    y_raw    = df_spec['norm_fl_flattened']
-    y_smooth = df_spec['norm_fl_smooth_flattened']
-
-    ax_ca.plot(wl_plot, y_raw,    color='tab:grey', label='raw')
-    ax_ca.plot(wl_plot, y_smooth, color='k',        label='smoothed')
-    ax_ca.plot([r_init_wl, b_init_wl],
-               y_spl([r_init_wl, b_init_wl]),
-               'o', color='tab:green', label='guesses')
-    ax_ca.plot([r_wl, b_wl],
-               y_spl([r_wl, b_wl]),
-               'o', mfc='none', mew=2.5, color='tab:red', label='solutions')
-    autoscale_ylim_for_xlim((7800, 9200), margin=0.1, ax=ax_ca)
-    ax_ca.legend()
-
-    ax_d1.plot(wl_plot, y_spl_1d(wl_plot), color='tab:blue', label='1st deriv')
-    ax_d1.axhline(0, ls='--', color='tab:red')
-    ax_d1.plot([r_init_wl, b_init_wl],
-               y_spl_1d([r_init_wl, b_init_wl]),
-               'o', markersize=5, color='tab:green', label='guesses')
-    ax_d1.plot([r_wl, b_wl],
-               y_spl_1d([r_wl, b_wl]),
-               'o', mfc='none', mew=2.5, color='tab:red', label='solutions')
-    autoscale_ylim_for_xlim((7800, 9200), margin=0.1, ax=ax_d1)
-    ax_d1.legend()
-
-    ax_d2.plot(wl_plot, y_spl_2d(wl_plot), color='tab:orange', label='2nd deriv')
-    ax_d2.axhline(0, ls='--', color='tab:red')
-    ax_d2.plot([r_init_wl, b_init_wl],
-               y_spl_2d([r_init_wl, b_init_wl]),
-               'o', markersize=5, color='tab:green', label='guesses')
-    ax_d2.plot([r_wl, b_wl],
-               y_spl_2d([r_wl, b_wl]),
-               'o', mfc='none', mew=2.5, color='tab:red', label='solutions')
-    autoscale_ylim_for_xlim((7800, 9200), margin=0.1, ax=ax_d2)
-    ax_d2.legend()
-    ax_d2.set_xlabel("Rest wavelength (Å)")
-
-    fig.tight_layout()
-    plt.close(fig)
-    return results, fig
-
-
-
 def fit_features(
     df_spec,
     background_dict,
     si_vel_1e3,
-    vel_width: float = 4.0,
+    vel_width: float = _DEFAULTS.vel_width,
     n_resol_neighbors: int = _DEFAULTS.ca_n_resol_neighbors,
     hvf_min_sep_kms: float = _DEFAULTS.ca_hvf_min_sep_kms,
     pvf_vel_frac: float = _DEFAULTS.ca_pvf_vel_frac,
@@ -274,6 +146,7 @@ def fit_features(
         df_spec['norm_flerr'].to_numpy(), df_spec['vel_ca_ref'].to_numpy(),
         background_dict, si_vel_1e3, vel_width, n_resol_neighbors,
         hvf_min_sep_kms, pvf_vel_frac,
+        continuum_mask=_continuum_mask(df_spec, background_dict, vel_width),
     )
     fig = _make_fit_figure(
         df_spec, background_dict, out_back=out_back, out_fit=out_fit,
@@ -282,8 +155,19 @@ def fit_features(
     return metrics, fig, out_back, out_fit
 
 
+def _continuum_mask(df_spec, background_dict, vel_width):
+    """Robust continuum-window selector for shoulder ("tangent") anchors."""
+    if not background_dict.get("filter_continuum"):
+        return None
+    from .tangent import continuum_mask
+
+    velocity = df_spec['vel_ca_ref'].to_numpy()
+    return lambda blue, red: continuum_mask(df_spec, velocity, blue, red, vel_width)
+
+
 def _fit_arrays(wavelength, flux, uncertainty, v, background_dict, si_vel_1e3,
-                vel_width, n_resol_neighbors, hvf_min_sep_kms, pvf_vel_frac):
+                vel_width, n_resol_neighbors, hvf_min_sep_kms, pvf_vel_frac,
+                continuum_mask=None):
     """Single numerical implementation for best-fit and MC Ca realizations.
 
     Velocity values, including the legacy hvf_min_sep_kms argument, use 10³ km/s.
@@ -311,6 +195,8 @@ def _fit_arrays(wavelength, flux, uncertainty, v, background_dict, si_vel_1e3,
     if not np.isfinite(vr) or not np.isfinite(vb) or vb >= vr:
         raise ValueError("Ca continuum anchors must be finite and blue < red")
     back_mask = ((v >= vr - hw) & (v <= vr + hw)) | ((v >= vb - hw) & (v <= vb + hw))
+    if continuum_mask is not None:
+        back_mask = continuum_mask(vb, vr)
     fit_mask = (v >= vb) & (v <= vr)
     if np.count_nonzero(back_mask) < 2:
         raise ValueError("Too few Ca background points")
@@ -356,7 +242,8 @@ def _fit_arrays(wavelength, flux, uncertainty, v, background_dict, si_vel_1e3,
     pars.add('fwhm_pvf', value=8.0,  min=resol_vel_ca)
     # HVF (amplitude tied to a single parameter → optically thick)
     pars.add('a_hvf',   value=-0.2,  max=0.0)
-    pars.add('v_hvf',   value=v_si - 4.0, max=hvf_v_max)
+    hvf_initial = background_dict.get('ca_hvf_velocity_initial', v_si - 4.0)
+    pars.add('v_hvf',   value=hvf_initial, max=hvf_v_max)
     pars.add('fwhm_hvf', value=8.0,  min=resol_vel_ca)
 
     def model_ca(params, wl):
@@ -539,7 +426,7 @@ def fit_features_mc(
     background_dict,
     si_vel_1e3,
     n_iter: int = _DEFAULTS.n_iterations,
-    vel_width: float = 4.0,
+    vel_width: float = _DEFAULTS.vel_width,
     n_resol_neighbors: int = _DEFAULTS.ca_n_resol_neighbors,
     hvf_min_sep_kms: float = _DEFAULTS.ca_hvf_min_sep_kms,
     pvf_vel_frac: float = _DEFAULTS.ca_pvf_vel_frac,
@@ -579,10 +466,13 @@ def fit_features_mc(
     wavelength = df_spec['rest_wl'].to_numpy()
     velocity = df_spec['vel_ca_ref'].to_numpy()
 
+    robust_mask = _continuum_mask(df_spec, background_dict, vel_width)
+
     def _single_fit(flux_draw, bg_draw):
         metrics, _, _, _ = _fit_arrays(
             wavelength, flux_draw, sigs, velocity, bg_draw, si_vel_1e3,
             vel_width, n_resol_neighbors, hvf_min_sep_kms, pvf_vel_frac,
+            continuum_mask=robust_mask,
         )
         metrics.update({key.removeprefix("ca_"): value for key, value in metrics.items()
                         if key.startswith("ca_at_bound_") or key == "ca_any_at_bound"})
@@ -758,7 +648,7 @@ def preview_full_spectrum(df_spec, spec_meta=None, si_vel_1e3=None):
 
 
 
-def preview_background(df_spec, background_dict, vel_width: float = 4.0, si_vel_1e3=None):
+def preview_background(df_spec, background_dict, vel_width: float = _DEFAULTS.vel_width, si_vel_1e3=None):
     """
     Show the Ca II NIR continuum background anchors and linear fit.
     Single-panel: Ca II NIR region only.
@@ -779,7 +669,11 @@ def preview_background(df_spec, background_dict, vel_width: float = 4.0, si_vel_
     y_r  = df_spec['norm_fl_flattened'].values
     y_sm = df_spec['norm_fl_smooth_flattened'].values
 
-    df_back = df_spec.loc[((v >= vr - hw) & (v <= vr + hw)) | ((v >= vb - hw) & (v <= vb + hw))]
+    back_mask = ((v >= vr - hw) & (v <= vr + hw)) | ((v >= vb - hw) & (v <= vb + hw))
+    robust_mask = _continuum_mask(df_spec, background_dict, vel_width)
+    if robust_mask is not None:
+        back_mask = robust_mask(vb, vr)
+    df_back = df_spec.loc[back_mask]
 
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(wl, y_r,  color='tab:grey', lw=1.0, label='raw',      zorder=1)
@@ -794,8 +688,8 @@ def preview_background(df_spec, background_dict, vel_width: float = 4.0, si_vel_
             'o', mfc='none', mec='k', mew=2.0, zorder=2)
 
     # Continuum fit line
-    wl_b  = wl[((v >= vr - hw) & (v <= vr + hw)) | ((v >= vb - hw) & (v <= vb + hw))]
-    y_b   = y_r[((v >= vr - hw) & (v <= vr + hw)) | ((v >= vb - hw) & (v <= vb + hw))]
+    wl_b = wl[back_mask]
+    y_b = y_r[back_mask]
     if len(wl_b) >= 2:
         a_poly, b_poly = np.polyfit(wl_b, y_b, 1)
     else:
@@ -834,7 +728,7 @@ def preview_background(df_spec, background_dict, vel_width: float = 4.0, si_vel_
 
 
 
-def preview_ca_fit(df_spec, background_dict, out_back, out_fit, vel_width: float = 4.0):
+def preview_ca_fit(df_spec, background_dict, out_back, out_fit, vel_width: float = _DEFAULTS.vel_width):
     """
     Interactive-quality-check preview: back-normalised velocity space.
     Mirrors preview_silicon_fit from the Si module.
@@ -899,7 +793,7 @@ def interactive_refine_background_and_fit(
     initial_background_dict,
     si_vel_1e3,
     spec_meta=None,
-    vel_width: float = 4.0,
+    vel_width: float = _DEFAULTS.vel_width,
     wl_xlim=(7000.0, 9300.0),
     n_resol_neighbors: int = _DEFAULTS.ca_n_resol_neighbors,
     hvf_min_sep_kms: float = _DEFAULTS.ca_hvf_min_sep_kms,
@@ -930,12 +824,13 @@ def interactive_refine_background_and_fit(
     -------
     background, bg_fig, best_fit_dict, fit_fig, vel_width, spec_qual_flag
     """
-    background    = dict(initial_background_dict)
+    background    = dict(initial_background_dict or {})
     spec_qual_flag = None
 
-    print("\nAutomatic Ca II NIR background anchors (10^3 km/s):")
-    print(f"  ca_red_side  = {background['ca_red_side']:.2f}")
-    print(f"  ca_blue_side = {background['ca_blue_side']:.2f}\n")
+    if background:
+        print("\nAutomatic Ca II NIR background anchors (10^3 km/s):")
+        print(f"  ca_red_side  = {background['ca_red_side']:.2f}")
+        print(f"  ca_blue_side = {background['ca_blue_side']:.2f}\n")
 
     ca_ref_1e4 = vel_to_wl(-11, rest_wl_ca_ref)   # approximate feature centre for click guide
 
@@ -953,7 +848,6 @@ def interactive_refine_background_and_fit(
         fig_full.canvas.draw_idle()
         plt.pause(0.001)
 
-        first_background = True
         while True:
             ans = input("Does the spectrum look ok? [Y/n]: ").strip().lower()
             if ans in ("y", "yes", ""):
@@ -970,23 +864,25 @@ def interactive_refine_background_and_fit(
 
         # ── Main loop ────────────────────────────────────────────────────────
         while True:
-            fig_bg = preview_background(df_spec, background, vel_width=vel_width, si_vel_1e3=si_vel_1e3)
-            try:
-                fig_bg.canvas.manager.set_window_title("Ca II NIR background preview")
-            except Exception:
-                pass
-            fig_bg.show()
-            fig_bg.canvas.draw_idle()
-            plt.pause(0.001)
-
-            if manual_start and first_background:
+            fig_bg = None
+            if not background or manual_start:
                 raw_bg = "n"
+                manual_start = False
             else:
+                fig_bg = preview_background(
+                    df_spec, background, vel_width=vel_width, si_vel_1e3=si_vel_1e3,
+                )
+                try:
+                    fig_bg.canvas.manager.set_window_title("Ca II NIR background preview")
+                except Exception:
+                    pass
+                fig_bg.show()
+                fig_bg.canvas.draw_idle()
+                plt.pause(0.001)
                 raw_bg = input(
                     "Do you like this Ca II NIR background? [Y/n] "
                     "(or type a new vel_width in 10^3 km/s): "
                 ).strip()
-            first_background = False
             ans_bg = raw_bg.lower()
 
             if ans_bg in ("", "y", "yes"):
@@ -1046,7 +942,8 @@ def interactive_refine_background_and_fit(
                     continue
 
             # ── Manual anchor re-click ───────────────────────────────────────
-            plt.close(fig_bg)
+            if fig_bg is not None:
+                plt.close(fig_bg)
 
             print("\nPlease select TWO new continuum points on the plot:")
             print("  1) Ca II NIR red-side continuum")
@@ -1061,14 +958,13 @@ def interactive_refine_background_and_fit(
             ax_click.plot(wl, y_raw, color='tab:grey', lw=1.0, label='raw')
             ax_click.plot(wl, y_sm,  color='k',        lw=1.0, label='smoothed')
 
-            # Shade existing windows
-            vr_c = background['ca_red_side']
-            vb_c = background['ca_blue_side']
-            hw   = vel_width / 2.0
-            for v_c in [vr_c, vb_c]:
-                wl_lo = vel_to_wl(v_c - hw, rest_wl_ca_ref)
-                wl_hi = vel_to_wl(v_c + hw, rest_wl_ca_ref)
-                ax_click.axvspan(wl_lo, wl_hi, alpha=0.2, color='tab:cyan', zorder=0)
+            if background:
+                hw = vel_width / 2.0
+                for key in ("ca_red_side", "ca_blue_side"):
+                    center = background[key]
+                    wl_lo = vel_to_wl(center - hw, rest_wl_ca_ref)
+                    wl_hi = vel_to_wl(center + hw, rest_wl_ca_ref)
+                    ax_click.axvspan(wl_lo, wl_hi, alpha=0.2, color='tab:cyan', zorder=0)
 
             # Ca II rest wavelength markers
             for rwl in [rest_wl_ca1, rest_wl_ca2, rest_wl_ca3]:
@@ -1114,6 +1010,8 @@ def interactive_refine_background_and_fit(
             background['ca_blue_side']       = wl_to_vel(w_blue, rest_wl_ca_ref)
             background['status_ca_red_side']  = "manual"
             background['status_ca_blue_side'] = "manual"
+            background.pop("filter_continuum", None)
+            background.pop("ca_hvf_velocity_initial", None)
 
             # Red side must sit at a higher (less negative) velocity than the
             # blue side. If the clicks came in reversed, swap them so the fit

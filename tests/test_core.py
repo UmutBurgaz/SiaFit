@@ -96,38 +96,6 @@ def test_spectrum_reader_skips_wavelength_only_rows_without_losing_valid_pixels(
     assert np.all(spectrum["fl_err"] > 0)
 
 
-@pytest.mark.parametrize("root_velocity, expected_count", [(0.5, 1), (7.0, 0)])
-def test_extrema_search_rejects_roots_outside_its_velocity_window(root_velocity, expected_count):
-    root_wavelength = core.vel_to_wl(root_velocity, core.rest_wl_sil1_1)
-    roots, second_derivatives = core._scan_extrema_in_window(
-        lambda wavelength: -(wavelength - root_wavelength),
-        lambda wavelength: -1.0,
-        v_center_1e3=0.0,
-        rest_wl=core.rest_wl_sil1_1,
-        v_window_kms=1000.0,
-        dv_kms=1000.0,
-    )
-    assert len(roots) == expected_count
-    if expected_count:
-        assert roots[0] == pytest.approx(root_wavelength)
-        assert second_derivatives[0] < 0
-
-
-def test_anchor_selection_rejects_extrapolated_extrema():
-    wavelength_grid = np.linspace(6000.0, 6400.0, 100)
-    # The closest candidate is outside observed coverage, but inside velocity bounds.
-    candidates = [(6500.0, 7.13), (6300.0, -2.23)]
-    selected = core._pick_with_index_exclusion_and_bounds(
-        candidates,
-        v_center_1e3=7.0,
-        wl_grid=wavelength_grid,
-        exclude_idx=[],
-        min_sep=5,
-        bounds_kms=(-15_000.0, 15_000.0),
-    )
-    assert selected == 6300.0
-
-
 def test_joint_fit_recovers_known_synthetic_line_parameters():
     wavelength = np.linspace(5200.0, 6800.0, 801)
     flux = (

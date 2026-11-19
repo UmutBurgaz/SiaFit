@@ -25,7 +25,9 @@ def test_ca_triplet_recovers_synthetic_pvf_and_hvf():
         "vel_ca_ref": ca.wl_to_vel(wavelength, ca.rest_wl_ca_ref),
     })
     background = {"ca_red_side": 3.0, "ca_blue_side": -35.0}
-    metrics, figure, *_ = ca.fit_features(spectrum, background, -10.0, n_resol_neighbors=4)
+    metrics, figure, *_ = ca.fit_features(
+        spectrum, background, -10.0, vel_width=4.0, n_resol_neighbors=4,
+    )
     try:
         # Values from the original Ca implementation on this exact input.
         assert metrics["ca_pvf_vel"] == pytest.approx(-10.0427458888, abs=1e-4)
@@ -92,7 +94,7 @@ def test_coverage_is_feature_specific_and_tracks_search_configuration():
         validate_coverage(si_only, 0.0, ca.required_rest_intervals(ca_config))
     with pytest.raises(ValueError, match="Si II coverage failed"):
         validate_coverage(ca_only, 0.0, core.required_rest_intervals(si_config))
-    wider = replace(ca_config, ca_background_search_window_kms=15_000.0)
+    wider = replace(ca_config, ca_coverage_bounds_kms=(-45_000.0, 18_000.0))
     assert ca.required_rest_intervals(wider)[0].upper > ca.required_rest_intervals(ca_config)[0].upper
     wider_si = replace(si_config, sil6355_red_bounds_kms=(-15_000.0, 25_000.0))
     assert core.required_rest_intervals(wider_si)[0].upper > core.required_rest_intervals(si_config)[0].upper

@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from matplotlib.figure import Figure
 
-from siafit import FitConfig, ca, core, load_catalog, pipeline, run_catalog
+from siafit import FitConfig, ca, core, load_catalog, pipeline, run_catalog, tangent
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -16,10 +16,7 @@ def test_joint_interactive_workflow_with_scripted_user_events(tmp_path, monkeypa
     record = load_catalog(ROOT / "example_catalog.csv", default_mode=mode)[0]
     spectrum, _ = pipeline._prepare(record, config)
     si_background, si_figure = pipeline._find_background(spectrum, config)
-    ca_background, ca_figure = ca.find_background_regions(
-        spectrum, ca_red_side_init=config.ca_red_initial,
-        ca_blue_side_init=config.ca_blue_initial,
-    )
+    ca_background, ca_figure = tangent.find_ca_background(spectrum, config, record.metadata["si_velocity"])
     core.plt.close(si_figure)
     core.plt.close(ca_figure)
     si_clicks = iter([

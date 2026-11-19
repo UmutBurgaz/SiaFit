@@ -140,7 +140,7 @@ def test_mc_failed_draw_does_not_partially_append_metrics():
 def test_joint_example_records_scientific_review_flags_without_rejecting_row(tmp_path):
     summary = run_catalog(
         ROOT / "example_catalog.csv", tmp_path,
-        config=FitConfig(features="all", n_iterations=2, seed=42, anchor_strategy="legacy"), start=2, end=3,
+        config=FitConfig(features="all", n_iterations=2, seed=42), start=2, end=3,
     )
     assert summary.succeeded == 1
     row = pd.read_csv(tmp_path / "fit_results.csv").iloc[0]
@@ -148,17 +148,15 @@ def test_joint_example_records_scientific_review_flags_without_rejecting_row(tmp
     assert row["best_fit_ca_at_bound_v_pvf"] == 1
     assert row["best_fit_ca_fit_qc_flag"] == 1
     assert "high_reduced_chisquare" in row["best_fit_ca_fit_qc_reasons"]
-    assert row["best_fit_ca_optimizer_redchi"] == pytest.approx(886.918934965, rel=1e-5)
-    assert row["best_fit_ca_pvf_vel"] == pytest.approx(-7.34129935667, abs=1e-5)
+    assert row["best_fit_ca_optimizer_redchi"] > FitConfig().redchi_warning_threshold
+    slowest_pvf = row["selected_si_velocity"] * (1 - FitConfig().ca_pvf_vel_frac)
+    assert row["best_fit_ca_pvf_vel"] == pytest.approx(slowest_pvf, abs=1e-5)
     assert row["ca_at_bound_v_pvf_fraction_resample"] == 1.0
     assert row["best_fit_ca_uncertainty_conditioning"] == "fixed_si_velocity"
     assert "best_fit_at_bound_v_sil1_1" in row.index
 
 
 @pytest.mark.parametrize("settings", [
-    {"sil6355_red_initial": 100.0},
-    {"sil6355_blue_initial": -10.0},
-    {"sil5972_blue_initial": -35.0},
     {"redchi_warning_threshold": 0.0},
     {"redchi_warning_threshold": float("nan")},
 ])
@@ -172,7 +170,7 @@ def test_direct_fit_defaults_agree_with_pipeline_configuration(module):
     import inspect
 
     config = FitConfig()
-    fields = {"n_resol_neighbors": "n_resol_neighbors" if module is core else "ca_n_resol_neighbors"}
+    fields = {"vel_width": "vel_width", "n_resol_neighbors": "n_resol_neighbors" if module is core else "ca_n_resol_neighbors"}
     if module is core:
         fields.update(k_vel12_bounds="k_vel12_bounds", k_fwhm12_bounds="k_fwhm12_bounds")
     else:

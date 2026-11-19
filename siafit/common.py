@@ -12,7 +12,6 @@ import pandas as pd
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from PyAstronomy import pyasl
 from scipy.interpolate import make_interp_spline
-from scipy.optimize import fsolve
 
 from .style import apply_plot_style
 
@@ -563,190 +562,6 @@ def lin_back(x, a, b):
 
 
 
-def _dedup_wavelength_roots(wls, atol=0.25):
-    """
-    Deduplicate very close wavelength roots (Å) to avoid counting the same
-    root multiple times. Keeps the first of any cluster within `atol` Å.
-    """
-    if not wls:
-        return []
-    w = np.sort(np.array(wls, float))
-    kept = [w[0]]
-    for x in w[1:]:
-        if abs(x - kept[-1]) > float(atol):
-            kept.append(x)
-    return kept
-
-
-
-def _scan_extrema_in_window(func, d2func, v_center_1e3, rest_wl, v_window_kms, dv_kms):
-    """
-    Try fsolve from multiple seeds spaced by `dv_kms` within the velocity window
-    [v_center_1e3 ± v_window_kms]. Seeds are built in km/s, converted to Å.
-    Returns converged roots (Å) inside that window and their second derivatives.
-    """
-    v0_kms = float(v_center_1e3) * 1e3
-    halfwin = abs(float(v_window_kms))
-    step = max(100.0, abs(float(dv_kms)))  # never smaller than 100 km/s
-    grid_kms = np.arange(v0_kms - halfwin, v0_kms + halfwin + 0.5 * step, step)
-
-    seeds_wl = [float(vel_to_wl(v / 1e3, rest_wl)) for v in grid_kms]
-
-    roots = []
-    for guess_wl in seeds_wl:
-        try:
-            root, info, flag, _ = fsolve(func, guess_wl, full_output=True, maxfev=200)
-            root_wl = float(root[0])
-            if flag != 1 or not np.isfinite(root_wl) or root_wl <= 0:
-                continue
-            # fsolve is unbounded: a seed inside the window can converge to an
-            # unrelated extremum outside it. Check the root, not just the seed.
-            root_velocity_kms = float(wl_to_vel(root_wl, rest_wl)) * 1e3
-            if abs(root_velocity_kms - v0_kms) <= halfwin + 1e-8:
-                roots.append(root_wl)
-        except Exception:
-            continue
-
-    roots = _dedup_wavelength_roots(roots)
-    d2vals = []
-    for r in roots:
-        try:
-            d2vals.append(float(d2func(r)))
-        except Exception:
-            d2vals.append(np.nan)
-    return roots, np.array(d2vals, float)
-
-
-
-def _maxima_candidates_in_window(func, d2func, v_center_1e3, rest_wl, v_window_kms, dv_kms):
-    """
-    Return all maxima candidates (where d²<0) within the velocity window
-    as (wl, v_1e3) pairs, plus a minima_only flag.
-    """
-    roots, d2vals = _scan_extrema_in_window(
-        func, d2func, v_center_1e3, rest_wl, v_window_kms=v_window_kms, dv_kms=dv_kms
-    )
-    if len(roots) == 0:
-        return [], False
-    mask_max = (d2vals < 0) & np.isfinite(d2vals)
-    if not np.any(mask_max):
-        return [], True  # minima only
-    wl_max = np.array(roots, float)[mask_max]
-    v_max = np.array([wl_to_vel(w, rest_wl) for w in wl_max], float)
-    return list(zip(wl_max, v_max)), False
-
-
-
-def _pick_with_index_exclusion_and_bounds(
-    candidates, v_center_1e3, wl_grid, exclude_idx, min_sep, bounds_kms
-):
-    """
-    Pick the maximum candidate closest in velocity to v_center_1e3,
-    enforcing:
-      - min index separation (>= min_sep points) from all exclude_idx
-      - velocity bounds (km/s): bounds_kms = (vmin, vmax)
-
-    Returns wl (float) or None if none pass both tests.
-    """
-    if not candidates:
-        return None
-    vmin, vmax = bounds_kms
-    v_center = float(v_center_1e3)
-
-    grid = np.asarray(wl_grid)
-
-    def wl_to_idx(w):
-        return int(np.argmin(np.abs(grid - w)))
-
-    def sort_key(c):
-        _, v1e3_c = c
-        return abs(v1e3_c - v_center)
-
-    for wl_cand, v1e3_cand in sorted(candidates, key=sort_key):
-        # Spline extrapolation can produce extrema beyond observed coverage.
-        if not np.isfinite(wl_cand) or not (grid.min() <= wl_cand <= grid.max()):
-            continue
-        v_kms = float(v1e3_cand) * 1e3
-        if not (vmin < v_kms < vmax):  # strict inequalities as you specified
-            continue
-        idx_cand = wl_to_idx(wl_cand)
-        if all(abs(idx_cand - idx_ex) >= int(min_sep) for idx_ex in exclude_idx):
-            return float(wl_cand)
-    return None
-
-
-
-def _choose_unique_anchor(
-    func,
-    d2func,
-    v_init_1e3,
-    rest_wl,
-    v_window_kms,
-    dv_kms,
-    wl_grid,
-    exclude_idx,
-    min_sep,
-    max_attempts,
-    bounds_kms,
-):
-    """
-    Pick a unique **maximum** ensuring:
-      - ≥ min_sep grid points from other anchors
-      - velocity within `bounds_kms` (km/s)
-    with bi-directional velocity shifts.
-
-    Search order of centers (in 10^3 km/s):
-      0, +1, -1, +2, -2, ... times (dv_kms/1e3), up to `max_attempts`.
-
-    Status on failure:
-      - 'conflict_no_unique_max' if maxima existed but all failed separation/bounds
-      - 'minima_only' if only minima were found across attempts
-      - 'fallback_initial' if no extrema at all
-      In all cases we fallback to the initial guess wavelength; if *that* is
-      out of bounds, we clip it to the nearest bound and label 'clipped_to_bounds'.
-    """
-    any_cands = False
-    any_minima_only = False
-
-    # attempt offsets: [0, +1, -1, +2, -2, ...]
-    attempt_offsets = [0]
-    for k in range(1, int(max_attempts) + 1):
-        attempt_offsets += [+k, -k]
-
-    for off in attempt_offsets:
-        v_center_1e3 = float(v_init_1e3) + (off * float(dv_kms) / 1e3)
-        cands, minima_only = _maxima_candidates_in_window(
-            func, d2func, v_center_1e3, rest_wl, v_window_kms, dv_kms
-        )
-        any_cands |= bool(cands)
-        any_minima_only |= bool(minima_only)
-
-        wl_pick = _pick_with_index_exclusion_and_bounds(
-            cands, v_center_1e3, wl_grid, exclude_idx, min_sep, bounds_kms
-        )
-        if wl_pick is not None:
-            return wl_pick, "automatic"
-
-    # --- No acceptable maximum after all attempts → fallback logic ---
-    vmin, vmax = bounds_kms
-    # initial-guess wavelength
-    wl_fallback = float(vel_to_wl(v_init_1e3, rest_wl))
-    v_fallback_kms = float(v_init_1e3) * 1e3
-
-    if not (vmin < v_fallback_kms < vmax):
-        # clip to nearest bound (convert bound velocity to wavelength)
-        v_clip_kms = vmin if abs(v_fallback_kms - vmin) < abs(v_fallback_kms - vmax) else vmax
-        wl_clip = float(vel_to_wl(v_clip_kms / 1e3, rest_wl))
-        return wl_clip, "clipped_to_bounds"
-
-    if any_cands:
-        return wl_fallback, "out_of_bounds"  # or separation conflicts led to failure
-    if any_minima_only:
-        return wl_fallback, "minima_only"
-    return wl_fallback, "fallback_initial"
-
-
-
 def prepare_spectrum(
     file_spec,
     redshift,
@@ -962,7 +777,16 @@ def prepare_spectrum(
     )
     y_spl_for_flatten = make_interp_spline(x_for_flatten, y_data_for_flatten, k=3)
     y_spl_flatten_eval = y_spl_for_flatten(df_spec["rest_wl"])
-    if np.any(~np.isfinite(y_spl_flatten_eval)) or np.any(np.isclose(y_spl_flatten_eval, 0.0)):
+    positive_samples = np.all(np.isfinite(y_data_for_flatten)) and np.all(y_data_for_flatten > 0)
+    invalid = ~np.isfinite(y_spl_flatten_eval) | np.isclose(y_spl_flatten_eval, 0.0)
+    if positive_samples and (invalid.any() or np.any(y_spl_flatten_eval < 0)):
+        # A cubic through positive samples can cross zero between pixels.
+        # Interpolating in log flux keeps the continuum positive.
+        y_spl_flatten_eval = np.exp(make_interp_spline(
+            x_for_flatten, np.log(y_data_for_flatten), k=3)(df_spec["rest_wl"]))
+    if (np.any(~np.isfinite(y_spl_flatten_eval))
+            or np.any(np.isclose(y_spl_flatten_eval, 0.0))
+            or (positive_samples and np.any(y_spl_flatten_eval <= 0))):
         raise ValueError("Cannot flatten spectrum: continuum spline is zero or invalid")
 
     df_spec.loc[:, "norm_fl_flattened"] = df_spec["norm_fl"] / y_spl_flatten_eval

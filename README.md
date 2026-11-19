@@ -48,8 +48,9 @@ For Ca-only data without a `si_velocity` catalogue column, pass `--si-velocity V
 
 `--mode auto` uses automatic continuum anchors. `--mode review` offers interactive approval and adjustment. `--mode manual` starts with manual continuum selection. Interactive modes require a graphical Matplotlib backend.
 
-Version 1.1.0 improves automatic fitting of fast, blue-side Si II absorption.
-Use `--anchor-strategy legacy` to retain the previous automatic fitting method.
+### What's new in 1.2.0
+
+Automatic continuum anchors follow the shoulders of the Si II and Ca II NIR absorption features. The default continuum window is 3,000 km/s wide. Use `--vel-width` to change it in units of 10³ km/s.
 
 ## Input spectra and catalogue
 
@@ -66,7 +67,7 @@ my_spectrum.dat,0.031,0.018,-11.0
 
 `--features si` checks only Si. `--features ca` checks only Ca. `--features all` checks both intervals independently, so a gap between the two fitting regions is allowed. Within either interval, the preflight checks endpoint sampling, requires at least eight pixels, and rejects gaps larger than five times the local median pixel spacing. Successful output rows record required rest-frame and corresponding observed-frame intervals in `coverage_status`. Failures report both intervals and the sampling problem.
 
-The coverage settings can be inspected or changed through `FitConfig`, including `sil6355_*_bounds_kms`, `sil5972_blue_bounds_kms`, `ca_*_initial`, `ca_*_bounds_kms`, `ca_background_search_window_kms`, and `vel_width`.
+The coverage settings can be inspected or changed through `FitConfig`, including `sil6355_*_bounds_kms`, `sil5972_blue_bounds_kms`, `ca_coverage_bounds_kms`, and `vel_width`.
 
 ## Results
 

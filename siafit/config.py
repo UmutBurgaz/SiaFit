@@ -16,21 +16,11 @@ class FitConfig:
     input_format: str = "auto"
     vexp: float | None = None
     clip_outliers: bool = True
-    vel_width: float = 4.0
-    sil6355_red_initial: float = 0.0
-    sil6355_blue_initial: float = -20.0
-    sil5972_blue_initial: float = -20.0
-    background_search_window_kms: float = 20_000.0
-    background_search_step_kms: float = 1_000.0
-    background_search_attempts: int = 5
+    vel_width: float = 3.0
     sil6355_red_bounds_kms: tuple[float, float] = (-15_000.0, 15_000.0)
     sil6355_blue_bounds_kms: tuple[float, float] = (-40_000.0, -15_000.0)
     sil5972_blue_bounds_kms: tuple[float, float] = (-30_000.0, -10_000.0)
-    ca_red_initial: float = 3.0
-    ca_blue_initial: float = -35.0
-    ca_background_search_window_kms: float = 10_000.0
-    ca_background_search_step_kms: float = 1_000.0
-    ca_background_search_attempts: int = 5
+    ca_coverage_bounds_kms: tuple[float, float] = (-45_000.0, 13_000.0)
     ca_red_bounds_kms: tuple[float, float] = (-5_000.0, 25_000.0)
     ca_blue_bounds_kms: tuple[float, float] = (-55_000.0, -20_000.0)
     ca_n_resol_neighbors: int = 3
@@ -45,11 +35,23 @@ class FitConfig:
     continuum_shift: float = 1.3
     seed: int | None = None
     redchi_warning_threshold: float | None = 10.0
-    anchor_strategy: str = "profile"
+    # Tangent (shoulder) anchors. Velocities are in 10³ km/s; prominence and
+    # near are fractions of the trough depth below the continuum line.
+    tangent_prominence: float = 0.05
+    tangent_weak_prominence: float = 0.015
+    tangent_shoulder_reach: tuple[float, float] = (16.0, 18.0)
+    tangent_ca_shoulder_reach: tuple[float, float] = (10.0, 8.0)
+    tangent_near: float = 0.35
+    tangent_si_trough_range: tuple[float, float] = (-32.0, -5.5)
+    tangent_si_trough_limits: tuple[float, float] = (-38.0, -0.5)
+    tangent_search_span: tuple[float, float] = (26.0, 26.0)
+    tangent_si5972_reach: float = 20.0
+    tangent_si5972_min_width: float = 5.0
+    tangent_ca_core_hvf: float = 6.0
+    tangent_ca_reach: tuple[float, float] = (22.0, 16.0)
+    tangent_ca_min_gap: float = 1.0
 
     def validate(self) -> None:
-        if self.anchor_strategy not in {"legacy", "adaptive", "profile"}:
-            raise ValueError("anchor_strategy must be 'legacy', 'adaptive', or 'profile'")
         def finite_number(name: str, value: object) -> None:
             if isinstance(value, bool) or not isinstance(value, Real) or not isfinite(value):
                 raise ValueError(f"{name} must be a finite number")
@@ -80,10 +82,6 @@ class FitConfig:
             raise ValueError("input_format must be 'auto', 'flux', or 'flux-error'")
         positive_settings = {
             "vel_width": self.vel_width,
-            "background_search_window_kms": self.background_search_window_kms,
-            "background_search_step_kms": self.background_search_step_kms,
-            "ca_background_search_window_kms": self.ca_background_search_window_kms,
-            "ca_background_search_step_kms": self.ca_background_search_step_kms,
             "ca_hvf_min_sep_kms": self.ca_hvf_min_sep_kms,
             "ca_pvf_vel_frac": self.ca_pvf_vel_frac,
         }
@@ -94,41 +92,16 @@ class FitConfig:
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
         for name in (
-            "sil6355_red_initial",
-            "sil6355_blue_initial",
-            "sil5972_blue_initial",
-            "ca_red_initial",
-            "ca_blue_initial",
-        ):
-            value = getattr(self, name)
-            finite_number(name, value)
-            if abs(value) >= 299.792:
-                raise ValueError(f"{name} must lie strictly between ±299.792 in 10³ km/s")
-        for name in (
             "sil6355_red_bounds_kms",
             "sil6355_blue_bounds_kms",
             "sil5972_blue_bounds_kms",
+            "ca_coverage_bounds_kms",
             "ca_red_bounds_kms",
             "ca_blue_bounds_kms",
         ):
             ordered_bounds(name, getattr(self, name))
-        for name, bounds_name in (
-            ("sil6355_red_initial", "sil6355_red_bounds_kms"),
-            ("sil6355_blue_initial", "sil6355_blue_bounds_kms"),
-            ("sil5972_blue_initial", "sil5972_blue_bounds_kms"),
-            ("ca_red_initial", "ca_red_bounds_kms"),
-            ("ca_blue_initial", "ca_blue_bounds_kms"),
-        ):
-            velocity_kms = getattr(self, name) * 1000.0
-            lower, upper = getattr(self, bounds_name)
-            if not lower <= velocity_kms <= upper:
-                raise ValueError(f"{name} must lie within {bounds_name}")
-        if self.ca_blue_initial >= self.ca_red_initial:
-            raise ValueError("ca_blue_initial must be lower than ca_red_initial")
         for name in ("k_vel12_bounds", "k_fwhm12_bounds"):
             ordered_bounds(name, getattr(self, name), positive=True)
-        integer_at_least("background_search_attempts", self.background_search_attempts, 0)
-        integer_at_least("ca_background_search_attempts", self.ca_background_search_attempts, 0)
         integer_at_least("n_resol_neighbors", self.n_resol_neighbors, 2)
         integer_at_least("ca_n_resol_neighbors", self.ca_n_resol_neighbors, 2)
         integer_at_least("n_iterations", self.n_iterations, 0)
@@ -141,6 +114,38 @@ class FitConfig:
             raise ValueError("continuum_shift cannot be negative")
         if self.si_velocity is not None:
             finite_number("si_velocity", self.si_velocity)
+        for name in ("tangent_prominence", "tangent_weak_prominence", "tangent_near",
+                     "tangent_si5972_reach", "tangent_si5972_min_width",
+                     "tangent_ca_core_hvf", "tangent_ca_min_gap"):
+            value = getattr(self, name)
+            finite_number(name, value)
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if self.tangent_weak_prominence > self.tangent_prominence:
+            raise ValueError("tangent_weak_prominence cannot exceed tangent_prominence")
+        for name in ("tangent_shoulder_reach", "tangent_ca_shoulder_reach",
+                     "tangent_search_span", "tangent_ca_reach"):
+            try:
+                blue, red = getattr(self, name)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{name} must contain a blue and a red distance") from exc
+            for value in (blue, red):
+                finite_number(name, value)
+                if value <= 0:
+                    raise ValueError(f"{name} distances must be positive")
+        for name in ("tangent_si_trough_range", "tangent_si_trough_limits"):
+            try:
+                lower, upper = getattr(self, name)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{name} must contain two velocities") from exc
+            finite_number(name, lower)
+            finite_number(name, upper)
+            if not lower < upper < 0:
+                raise ValueError(f"{name} must be two increasing negative velocities")
+        outer_lower, outer_upper = self.tangent_si_trough_limits
+        inner_lower, inner_upper = self.tangent_si_trough_range
+        if not outer_lower <= inner_lower < inner_upper <= outer_upper:
+            raise ValueError("tangent_si_trough_limits must contain tangent_si_trough_range")
         if self.redchi_warning_threshold is not None:
             finite_number("redchi_warning_threshold", self.redchi_warning_threshold)
             if self.redchi_warning_threshold <= 0:

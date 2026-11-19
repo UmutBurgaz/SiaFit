@@ -33,10 +33,6 @@ def _add_catalog_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _add_preparation_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--anchor-strategy", choices=("legacy", "adaptive", "profile"), default="profile",
-        help="Automatic Si profiles (default), legacy anchors, or adaptive trough selection",
-    )
-    parser.add_argument(
         "--si-velocity", type=float, default=None,
         help="Si II 6355 velocity in 10³ km/s for Ca-only fitting; catalogue values take precedence",
     )
@@ -65,7 +61,7 @@ def _add_background_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--vel-width",
         type=float,
-        default=4.0,
+        default=FitConfig().vel_width,
         help="Continuum-window width in 10^3 km/s",
     )
 
@@ -118,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     fit.add_argument(
         "--vel-width",
         type=float,
-        default=4.0,
+        default=FitConfig().vel_width,
         help="Fallback only; saved per-row widths take precedence",
     )
     return parser
@@ -128,7 +124,6 @@ def _config_from_args(args: argparse.Namespace) -> FitConfig:
     return FitConfig(
         mode=getattr(args, "mode", "auto"),
         features=args.features,
-        anchor_strategy=args.anchor_strategy,
         si_velocity=args.si_velocity,
         input_format=args.input_format,
         vexp=args.vexp,

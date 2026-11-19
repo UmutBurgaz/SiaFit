@@ -6,29 +6,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from lmfit import Model, Parameters, minimize
 from scipy.integrate import trapezoid
-from scipy.interpolate import make_interp_spline
 
 from . import common
-from .common import (
-    _choose_unique_anchor as _choose_unique_anchor,
-)
-from .common import (
-    _dedup_wavelength_roots as _dedup_wavelength_roots,
-)
 from .common import (
     _fig_to_rgb as _fig_to_rgb,
 )
 from .common import (
-    _maxima_candidates_in_window as _maxima_candidates_in_window,
-)
-from .common import (
     _mc_plot_bin_edges as _mc_plot_bin_edges,
-)
-from .common import (
-    _pick_with_index_exclusion_and_bounds as _pick_with_index_exclusion_and_bounds,
-)
-from .common import (
-    _scan_extrema_in_window as _scan_extrema_in_window,
 )
 from .common import (
     autoscale_ylim_for_xlim as autoscale_ylim_for_xlim,
@@ -141,242 +125,29 @@ def g_sil2_2(x, a_sil2_2, v_sil2_2, fwhm_sil2_2):
     return gaussian
 
 
-def find_background_regions(
-    df_spec,
-    sil6355_red_side_init,
-    sil6355_blue_side_init,
-    sil5972_blue_side_init,
-    v_window_kms=10000.0,
-    dv_kms_red=+1000.0,
-    dv_kms_blue=-1000.0,
-    min_sep=5,
-    max_attempts=5,
-    sil6355_red_bounds_kms=_DEFAULTS.sil6355_red_bounds_kms,
-    sil6355_blue_bounds_kms=_DEFAULTS.sil6355_blue_bounds_kms,
-    sil5972_blue_bounds_kms=_DEFAULTS.sil5972_blue_bounds_kms,
-):
+def _background_rows(df_spec, velocity_column, background_dict, line, vel_width):
+    """Rows of the two continuum windows of one Si II line.
+
+    Automatic anchors filter pixels on trough walls and narrow lines.
     """
-    Locate local continuum (background) anchor points for the Si II features
-    (6355 Å and 5972 Å) using spline derivatives and maxima search, with:
-      • **index-based uniqueness** (≥ `min_sep` wavelength points apart),
-      • **bi-directional retries** up to `max_attempts`,
-      • **per-anchor velocity constraints** that the results must satisfy.
+    velocity = df_spec[velocity_column]
+    blue = background_dict[f"{line}_blue_side"]
+    red = background_dict[f"{line}_red_side"]
+    if background_dict.get("filter_continuum"):
+        from .tangent import continuum_mask
 
-    Parameters
-    ----------
-    df_spec : pandas.DataFrame
-            Must contain:
-              - 'rest_wl' (Å)
-              - 'norm_fl_flattened'
-              - 'norm_fl_smooth_flattened'
-    sil6355_red_side_init, sil6355_blue_side_init, sil5972_blue_side_init : float
-            Initial guesses in velocity (10^3 km/s).
-    v_window_kms : float, optional
-            Half-width of velocity search window. Default 4000 km/s.
-    dv_kms_red, dv_kms_blue : float, optional
-            Velocity step for shifting the window center (km/s).
-            The algorithm tries centers at 0, ±1, ±2, ... × (dv_kms/1e3).
-            Defaults: +1000 (red side), −1000 (blue sides).
-    min_sep : int, optional
-            Minimum **index separation** (wavelength grid points) between any two anchors.
-            Default 5.
-    max_attempts : int, optional
-            Number of shift steps per direction after the initial attempt.
-            Total centers tested = 1 + 2*max_attempts. Default 2.
-    sil6355_red_bounds_kms : (float, float)
-            Allowed velocity range (km/s) for the 6355 red-side anchor. Default (-15000, +15000).
-    sil6355_blue_bounds_kms : (float, float)
-            Allowed velocity range (km/s) for the 6355 blue-side anchor. Default (-30000, -15000).
-    sil5972_blue_bounds_kms : (float, float)
-            Allowed velocity range (km/s) for the 5972 blue-side anchor. Default (-30000, -10000).
-
-    Returns
-    -------
-    results : dict
-            Velocities in 10^3 km/s and statuses:
-              - 'sil6355_red_side', 'sil6355_blue_side', 'sil5972_red_side', 'sil5972_blue_side'
-              - one ``status_...`` field for each anchor
-            Status values: 'automatic' | 'out_of_bounds' | 'conflict_no_unique_max'
-                                       | 'minima_only' | 'fallback_initial' | 'clipped_to_bounds'
-                                       | 'derived_from_sil6355_blue'
-            Note: 'sil5972_red_side' is derived from the chosen wavelength of 6355 blue-side.
-    fig : matplotlib.figure.Figure
-            Diagnostics (spectrum + derivatives).
-
-    Notes
-    -----
-    - Candidates violating bounds are ignored during selection.
-    - If no acceptable maximum is found, we fallback to the initial guess; if that
-      violates bounds, we **clip** to the nearest bound (status 'clipped_to_bounds').
-    - Requires external helpers/constants:
-            `vel_to_wl(v_1e3, rest_wl)`, `wl_to_vel(wl, rest_wl)`,
-            `make_interp_spline(x, y, k=3)` (object with `.derivative(nu)`),
-            `rest_wl_sil1_1` (~6355 Å), `rest_wl_sil2_1` (~5972 Å),
-            and optionally `autoscale_ylim_for_xlim(xlim, margin, ax)`.
-    """
-    # Prepare spline derivatives
-    y_spl_sil = make_interp_spline(df_spec["rest_wl"], df_spec["norm_fl_smooth_flattened"], k=3)
-    y_spl_1d_sil = y_spl_sil.derivative(nu=1)
-    y_spl_2d_sil = y_spl_sil.derivative(nu=2)
-
-    wl_grid = df_spec["rest_wl"].values
-
-    # Initial guesses (for plotting)
-    sil6355_red_side_wl = vel_to_wl(sil6355_red_side_init, rest_wl_sil1_1)
-    sil6355_blue_side_wl = vel_to_wl(sil6355_blue_side_init, rest_wl_sil1_1)
-    sil5972_blue_side_wl = vel_to_wl(sil5972_blue_side_init, rest_wl_sil2_1)
-
-    # keep exclusion list as grid indices
-    exclude_idx = []
-
-    def wl_to_idx(w):
-        return int(np.argmin(np.abs(wl_grid - w)))
-
-    # --- find anchors with uniqueness, retries, and bounds ---
-    r1_wl, st_r1 = _choose_unique_anchor(
-        y_spl_1d_sil,
-        y_spl_2d_sil,
-        sil6355_red_side_init,
-        rest_wl_sil1_1,
-        v_window_kms,
-        dv_kms_red,
-        wl_grid,
-        exclude_idx,
-        min_sep,
-        max_attempts,
-        sil6355_red_bounds_kms,
-    )
-    exclude_idx.append(wl_to_idx(r1_wl))
-
-    b1_wl, st_b1 = _choose_unique_anchor(
-        y_spl_1d_sil,
-        y_spl_2d_sil,
-        sil6355_blue_side_init,
-        rest_wl_sil1_1,
-        v_window_kms,
-        dv_kms_blue,
-        wl_grid,
-        exclude_idx,
-        min_sep,
-        max_attempts,
-        sil6355_blue_bounds_kms,
-    )
-    exclude_idx.append(wl_to_idx(b1_wl))
-
-    b2_wl, st_b2 = _choose_unique_anchor(
-        y_spl_1d_sil,
-        y_spl_2d_sil,
-        sil5972_blue_side_init,
-        rest_wl_sil2_1,
-        v_window_kms,
-        dv_kms_blue,
-        wl_grid,
-        exclude_idx,
-        min_sep,
-        max_attempts,
-        sil5972_blue_bounds_kms,
-    )
-    exclude_idx.append(wl_to_idx(b2_wl))
-
-    results = {
-        "sil6355_red_side": wl_to_vel(r1_wl, rest_wl_sil1_1),
-        "sil6355_blue_side": wl_to_vel(b1_wl, rest_wl_sil1_1),
-        "sil5972_red_side": wl_to_vel(b1_wl, rest_wl_sil2_1),  # tied to b1 wl
-        "sil5972_blue_side": wl_to_vel(b2_wl, rest_wl_sil2_1),
-        "status_sil6355_red_side": st_r1,
-        "status_sil6355_blue_side": st_b1,
-        "status_sil5972_red_side": "derived_from_sil6355_blue",
-        "status_sil5972_blue_side": st_b2,
-    }
-
-    # --- diagnostics plotting ---
-    fig, axs = plt.subplots(ncols=1, nrows=3, sharex="col", figsize=(6, 8))
-    ax_sil, ax_d1, ax_d2 = axs.flatten()
-
-    wl = df_spec["rest_wl"]
-    y_raw = df_spec["norm_fl_flattened"]
-    y_smooth = df_spec["norm_fl_smooth_flattened"]
-
-    ax_sil.plot(wl, y_raw, color="tab:grey", label="raw")
-    ax_sil.plot(wl, y_smooth, color="k", label="smoothed")
-
-    ax_sil.plot(
-        [sil6355_red_side_wl, sil6355_blue_side_wl, sil5972_blue_side_wl],
-        y_spl_sil([sil6355_red_side_wl, sil6355_blue_side_wl, sil5972_blue_side_wl]),
-        "o",
-        color="tab:green",
-        label="guesses",
-    )
-
-    ax_sil.plot(
-        [r1_wl, b1_wl, b2_wl],
-        y_spl_sil([r1_wl, b1_wl, b2_wl]),
-        "o",
-        mfc="none",
-        mew=2.5,
-        color="tab:red",
-        label="solutions",
-    )
-
-    autoscale_ylim_for_xlim((5250, 6750), margin=0.1, ax=ax_sil)
-    ax_sil.legend()
-
-    ax_d1.plot(wl, y_spl_1d_sil(wl), color="tab:blue", label="1st deriv")
-    ax_d1.axhline(0, ls="--", color="tab:red")
-
-    ax_d1.plot(
-        [sil6355_red_side_wl, sil6355_blue_side_wl, sil5972_blue_side_wl],
-        y_spl_1d_sil([sil6355_red_side_wl, sil6355_blue_side_wl, sil5972_blue_side_wl]),
-        "o",
-        markersize=5,
-        color="tab:green",
-        label="guesses",
-    )
-    ax_d1.plot(
-        [r1_wl, b1_wl, b2_wl],
-        y_spl_1d_sil([r1_wl, b1_wl, b2_wl]),
-        "o",
-        mfc="none",
-        mew=2.5,
-        color="tab:red",
-        label="solutions",
-    )
-    autoscale_ylim_for_xlim((5250, 6750), margin=0.1, ax=ax_d1)
-    ax_d1.legend()
-
-    ax_d2.plot(wl, y_spl_2d_sil(wl), color="tab:orange", label="2nd deriv")
-    ax_d2.axhline(0, ls="--", color="tab:red")
-    ax_d2.plot(
-        [sil6355_red_side_wl, sil6355_blue_side_wl, sil5972_blue_side_wl],
-        y_spl_2d_sil([sil6355_red_side_wl, sil6355_blue_side_wl, sil5972_blue_side_wl]),
-        "o",
-        markersize=5,
-        color="tab:green",
-        label="guesses",
-    )
-    ax_d2.plot(
-        [r1_wl, b1_wl, b2_wl],
-        y_spl_2d_sil([r1_wl, b1_wl, b2_wl]),
-        "o",
-        mfc="none",
-        mew=2.5,
-        color="tab:red",
-        label="solutions",
-    )
-    autoscale_ylim_for_xlim((5250, 6750), margin=0.1, ax=ax_d2)
-    ax_d2.legend()
-    ax_d2.set_xlabel("Rest wavelength (Å)")
-
-    fig.tight_layout()
-    plt.close(fig)
-
-    return results, fig
+        return df_spec.loc[continuum_mask(df_spec, velocity.to_numpy(), blue, red, vel_width)]
+    half = vel_width / 2.0
+    return df_spec.loc[
+        ((velocity >= blue - half) & (velocity <= blue + half))
+        | ((velocity >= red - half) & (velocity <= red + half))
+    ]
 
 
 def fit_features(
     df_spec,
     background_dict,
-    vel_width: float = 4.0,
+    vel_width: float = _DEFAULTS.vel_width,
     n_resol_neighbors: int = _DEFAULTS.n_resol_neighbors,
     k_vel12_bounds: tuple[float, float] = _DEFAULTS.k_vel12_bounds,
     k_fwhm12_bounds: tuple[float, float] = _DEFAULTS.k_fwhm12_bounds,
@@ -392,9 +163,9 @@ def fit_features(
     df_spec : pandas.DataFrame
             Spectrum dataframe from `prepare_spectrum`.
     background_dict : dict
-            From `find_background_regions` (contains velocity bounds).
+            Continuum anchors from selection or a saved background catalogue.
     vel_width : float, optional
-            Full width of each background window (10^3 km/s). Default 4.0.
+            Full width of each background window (10^3 km/s). Default 3.0.
     n_resol_neighbors : int, optional
             Number of nearest points around each line’s rest wavelength used to
             estimate instrumental resolution in velocity space. Default 3.
@@ -410,32 +181,10 @@ def fit_features(
     fig : matplotlib.figure.Figure
             Summary plot (data, background, model components).
     """
-    if background_dict.get("anchor_strategy") == "profile":
-        from .profile import fit_features as fit_profiles
-
-        return fit_profiles(df_spec, background_dict, k_vel12_bounds=k_vel12_bounds,
-                            k_fwhm12_bounds=k_fwhm12_bounds, n_resol_neighbors=n_resol_neighbors,
-                            vel_width=vel_width)
-    df_spec_for_back_sil1 = df_spec.loc[
-        (
-            (df_spec["vel_sil1_1"] >= background_dict["sil6355_blue_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil1_1"] <= background_dict["sil6355_blue_side"] + vel_width / 2.0)
-        )
-        | (
-            (df_spec["vel_sil1_1"] >= background_dict["sil6355_red_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil1_1"] <= background_dict["sil6355_red_side"] + vel_width / 2.0)
-        )
-    ]
-    df_spec_for_back_sil2 = df_spec.loc[
-        (
-            (df_spec["vel_sil2_1"] >= background_dict["sil5972_blue_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil2_1"] <= background_dict["sil5972_blue_side"] + vel_width / 2.0)
-        )
-        | (
-            (df_spec["vel_sil2_1"] >= background_dict["sil5972_red_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil2_1"] <= background_dict["sil5972_red_side"] + vel_width / 2.0)
-        )
-    ]
+    df_spec_for_back_sil1 = _background_rows(
+        df_spec, "vel_sil1_1", background_dict, "sil6355", vel_width)
+    df_spec_for_back_sil2 = _background_rows(
+        df_spec, "vel_sil2_1", background_dict, "sil5972", vel_width)
 
     wl_back_sil1 = df_spec_for_back_sil1["rest_wl"].values
     y_back_sil1 = df_spec_for_back_sil1["norm_fl"].values
@@ -498,13 +247,16 @@ def fit_features(
     yerr_fit_sil2 = df_spec_for_fit_sil2["norm_flerr"] / back_sil2
 
     pars_fit_sil = Parameters()
-    pars_fit_sil.add("a_sil1_1", value=-1.1, max=0.0)
+    pars_fit_sil.add(
+        "a_sil1_1", value=background_dict.get("sil6355_amp_initial", -1.1), max=0.0)
     pars_fit_sil.add(
         "v_sil1_1", value=background_dict.get("sil6355_velocity_initial", -11.0),
         min=background_dict.get("sil6355_velocity_min", -np.inf),
         max=background_dict.get("sil6355_velocity_max", 0.0),
     )
-    pars_fit_sil.add("fwhm_sil1_1", value=8.0, min=resol_vel_sil1)
+    pars_fit_sil.add(
+        "fwhm_sil1_1", min=resol_vel_sil1,
+        value=background_dict.get("sil6355_fwhm_initial", 8.0))
     pars_fit_sil.add("a_sil1_2", expr="a_sil1_1")
     pars_fit_sil.add("v_sil1_2", expr="v_sil1_1")
     pars_fit_sil.add("fwhm_sil1_2", expr="fwhm_sil1_1")
@@ -883,7 +635,7 @@ def fit_features_mc(
     df_spec,
     background_dict,
     n_iter: int = _DEFAULTS.n_iterations,
-    vel_width: float = 4.0,
+    vel_width: float = _DEFAULTS.vel_width,
     n_resol_neighbors: int = _DEFAULTS.n_resol_neighbors,
     k_vel12_bounds: tuple[float, float] = _DEFAULTS.k_vel12_bounds,
     k_fwhm12_bounds: tuple[float, float] = _DEFAULTS.k_fwhm12_bounds,
@@ -913,13 +665,6 @@ def fit_features_mc(
     fig : matplotlib.figure.Figure
     """
 
-    if background_dict.get("anchor_strategy") == "profile":
-        from .profile import fit_features_mc as sample_profiles
-
-        return sample_profiles(df_spec, background_dict, n_iter=n_iter, mode=mode,
-                               continuum_shift=continuum_shift, seed=seed,
-                               k_vel12_bounds=k_vel12_bounds, k_fwhm12_bounds=k_fwhm12_bounds,
-                               n_resol_neighbors=n_resol_neighbors, vel_width=vel_width)
     rng = np.random.default_rng(seed)
 
     valid_modes = {"resample", "shift", "shift_resample", "all"}
@@ -945,26 +690,10 @@ def fit_features_mc(
         df_draw = df_spec.copy()
         df_draw.loc[:, "norm_fl_draw"] = flux_draw
 
-        df_spec_for_back_sil1 = df_draw.loc[
-            (
-                (df_draw["vel_sil1_1"] >= bg_draw["sil6355_blue_side"] - vel_width / 2.0)
-                & (df_draw["vel_sil1_1"] <= bg_draw["sil6355_blue_side"] + vel_width / 2.0)
-            )
-            | (
-                (df_draw["vel_sil1_1"] >= bg_draw["sil6355_red_side"] - vel_width / 2.0)
-                & (df_draw["vel_sil1_1"] <= bg_draw["sil6355_red_side"] + vel_width / 2.0)
-            )
-        ]
-        df_spec_for_back_sil2 = df_draw.loc[
-            (
-                (df_draw["vel_sil2_1"] >= bg_draw["sil5972_blue_side"] - vel_width / 2.0)
-                & (df_draw["vel_sil2_1"] <= bg_draw["sil5972_blue_side"] + vel_width / 2.0)
-            )
-            | (
-                (df_draw["vel_sil2_1"] >= bg_draw["sil5972_red_side"] - vel_width / 2.0)
-                & (df_draw["vel_sil2_1"] <= bg_draw["sil5972_red_side"] + vel_width / 2.0)
-            )
-        ]
+        df_spec_for_back_sil1 = _background_rows(
+            df_draw, "vel_sil1_1", bg_draw, "sil6355", vel_width)
+        df_spec_for_back_sil2 = _background_rows(
+            df_draw, "vel_sil2_1", bg_draw, "sil5972", vel_width)
 
         df_spec_for_fit_sil1 = df_draw.loc[
             (df_draw["vel_sil1_1"] >= bg_draw["sil6355_blue_side"])
@@ -1027,13 +756,16 @@ def fit_features_mc(
         yerr_fit_sil2 = df_spec_for_fit_sil2["norm_flerr"].values / back_sil2
 
         pars_fit_sil = Parameters()
-        pars_fit_sil.add("a_sil1_1", value=-1.1, max=0.0)
+        pars_fit_sil.add(
+            "a_sil1_1", value=background_dict.get("sil6355_amp_initial", -1.1), max=0.0)
         pars_fit_sil.add(
             "v_sil1_1", value=background_dict.get("sil6355_velocity_initial", -11.0),
             min=background_dict.get("sil6355_velocity_min", -np.inf),
             max=background_dict.get("sil6355_velocity_max", 0.0),
         )
-        pars_fit_sil.add("fwhm_sil1_1", value=8.0, min=resol_vel_sil1)
+        pars_fit_sil.add(
+            "fwhm_sil1_1", min=resol_vel_sil1,
+            value=background_dict.get("sil6355_fwhm_initial", 8.0))
         pars_fit_sil.add("a_sil1_2", expr="a_sil1_1")
         pars_fit_sil.add("v_sil1_2", expr="v_sil1_1")
         pars_fit_sil.add("fwhm_sil1_2", expr="fwhm_sil1_1")
@@ -1248,7 +980,7 @@ def fit_features_mc(
     return summary, fig
 
 
-def preview_background_all(df_spec, background_dict, vel_width: float = 4.0):
+def preview_background_all(df_spec, background_dict, vel_width: float = _DEFAULTS.vel_width):
     """
     Preview the continuum background for both Si II features (6355 and 5972).
 
@@ -1267,26 +999,10 @@ def preview_background_all(df_spec, background_dict, vel_width: float = 4.0):
     y_raw = df_spec["norm_fl_flattened"].values
     y_smooth = df_spec["norm_fl_smooth_flattened"].values
 
-    df_spec_for_back_sil1 = df_spec.loc[
-        (
-            (df_spec["vel_sil1_1"] >= background_dict["sil6355_blue_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil1_1"] <= background_dict["sil6355_blue_side"] + vel_width / 2.0)
-        )
-        | (
-            (df_spec["vel_sil1_1"] >= background_dict["sil6355_red_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil1_1"] <= background_dict["sil6355_red_side"] + vel_width / 2.0)
-        )
-    ]
-    df_spec_for_back_sil2 = df_spec.loc[
-        (
-            (df_spec["vel_sil2_1"] >= background_dict["sil5972_blue_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil2_1"] <= background_dict["sil5972_blue_side"] + vel_width / 2.0)
-        )
-        | (
-            (df_spec["vel_sil2_1"] >= background_dict["sil5972_red_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil2_1"] <= background_dict["sil5972_red_side"] + vel_width / 2.0)
-        )
-    ]
+    df_spec_for_back_sil1 = _background_rows(
+        df_spec, "vel_sil1_1", background_dict, "sil6355", vel_width)
+    df_spec_for_back_sil2 = _background_rows(
+        df_spec, "vel_sil2_1", background_dict, "sil5972", vel_width)
 
     fig, (ax_sil1, ax_sil2) = plt.subplots(ncols=1, nrows=2, figsize=(10, 8))
 
@@ -1425,29 +1141,13 @@ def preview_background_all(df_spec, background_dict, vel_width: float = 4.0):
 
 
 def preview_silicon_fit(
-    df_spec, background_dict, back_sil1, back_sil2, fit_sil, vel_width: float = 4.0
+    df_spec, background_dict, back_sil1, back_sil2, fit_sil, vel_width: float = _DEFAULTS.vel_width
 ):
 
-    df_spec_for_back_sil1 = df_spec.loc[
-        (
-            (df_spec["vel_sil1_1"] >= background_dict["sil6355_blue_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil1_1"] <= background_dict["sil6355_blue_side"] + vel_width / 2.0)
-        )
-        | (
-            (df_spec["vel_sil1_1"] >= background_dict["sil6355_red_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil1_1"] <= background_dict["sil6355_red_side"] + vel_width / 2.0)
-        )
-    ]
-    df_spec_for_back_sil2 = df_spec.loc[
-        (
-            (df_spec["vel_sil2_1"] >= background_dict["sil5972_blue_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil2_1"] <= background_dict["sil5972_blue_side"] + vel_width / 2.0)
-        )
-        | (
-            (df_spec["vel_sil2_1"] >= background_dict["sil5972_red_side"] - vel_width / 2.0)
-            & (df_spec["vel_sil2_1"] <= background_dict["sil5972_red_side"] + vel_width / 2.0)
-        )
-    ]
+    df_spec_for_back_sil1 = _background_rows(
+        df_spec, "vel_sil1_1", background_dict, "sil6355", vel_width)
+    df_spec_for_back_sil2 = _background_rows(
+        df_spec, "vel_sil2_1", background_dict, "sil5972", vel_width)
 
     df_spec_for_fit_sil1 = df_spec.loc[
         (df_spec["vel_sil1_1"] >= background_dict["sil6355_blue_side"])
@@ -1617,7 +1317,7 @@ def _require_interactive_backend() -> None:
 def select_background_manually(
     df_spec,
     current_background=None,
-    vel_width: float = 4.0,
+    vel_width: float = _DEFAULTS.vel_width,
     wl_xlim=(5250.0, 6750.0),
 ):
     """Select the four Si II continuum anchors with mouse clicks.
@@ -1691,6 +1391,10 @@ def select_background_manually(
         plt.close(fig)
 
     background = dict(current_background or {})
+    if background.pop("filter_continuum", False):
+        for key in tuple(background):
+            if key.startswith(("sil6355_velocity_", "sil6355_fwhm_", "sil6355_amp_", "tangent_")):
+                background.pop(key)
     background.update(
         {
             "sil6355_red_side": wl_to_vel(clicks[0], rest_wl_sil1_1),
@@ -1713,7 +1417,7 @@ def select_background_manually(
 def interactive_refine_background_and_fit(
     df_spec,
     initial_background_dict,
-    vel_width: float = 4.0,
+    vel_width: float = _DEFAULTS.vel_width,
     wl_xlim=(5250.0, 6750.0),
     n_resol_neighbors: int = _DEFAULTS.n_resol_neighbors,
     k_vel12_bounds: tuple[float, float] = _DEFAULTS.k_vel12_bounds,
@@ -1732,7 +1436,7 @@ def interactive_refine_background_and_fit(
     background, background_figure, fit_metrics, fit_figure, vel_width
     """
     _require_interactive_backend()
-    background = dict(initial_background_dict)
+    background = dict(initial_background_dict or {})
     was_interactive = plt.isinteractive()
     plt.ion()
 
